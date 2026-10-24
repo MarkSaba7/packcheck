@@ -1,0 +1,30 @@
+{
+  "product_id": "demo-dog-food-back",
+  "name": "Demo dog food 2 kg - back",
+  "pack": "demo-dog-food",
+  "face": "back",
+  "barcode": "4001234567890",
+  "reference_image": "reference.png",
+  "zones": [
+    {
+      "name": "packed_on",
+      "kind": "variable",
+      "rect": [
+        0.56,
+        0.8786,
+        0.38,
+        0.0786
+      ],
+      "expect": [
+        {
+          "name": "packed_on",
+          "kind": "date",
+          "formats": [
+            "%Y-%m-%d"
+          ],
+          "max_days_ahead": 0
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# CONFIDENTIAL: company artwork, photos and results never go into git.
+private/*
+!private/.gitkeep
+runs/*
+!runs/.gitkeep
+# Every product folder is ignored except the synthetic demo.
+products/*
+!products/demo-dog-food-front/
+!products/demo-dog-food-back/
+# The inspection database holds company product names and readings.
+packcheck.sqlite
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackCheck desk</title>
+<link rel="stylesheet" href="/static/packcheck.css">
+</head>
+<body>
+<main class="wide">
+  <header>
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <h1 data-t="page.desk_title" data-t-title="page.desk_title">Inspection desk</h1>
+  </header>
+  <div class="topline">
+    <a class="link-button" href="/" data-t="desk.phone_link">Check a package ↗</a>
+    <a class="link-button" id="report-link" href="#" target="_blank" rel="noopener" data-t="desk.open_report">Open today's report</a>
+    <button type="button" id="new-session" data-t="desk.new_session">New session</button>
+    <button type="button" data-language="en" aria-pressed="true">EN</button>
+    <button type="button" data-language="fr">FR</button>
+  </div>
+
+  <!-- The QR hand-off: this screen makes up a session, shows its link as a QR code; the phone
+       that scans it sends every inspection with that session id, and this screen polls for
+       them. Polling (asking every 2 s) is the plain alternative to WebSockets: nothing to
+       install, easy to explain, and 2 s is fast enough for a person walking between packs. -->
+  <div class="desk">
+    <div>
+      <p data-t="desk.intro">Scan this code with the phone. Every pack it checks appears here.</p>
+      <img class="qr" id="qr" alt="QR code">
+      <p class="link-text" id="link"></p>
+    </div>
+    <div>
+      <p id="waiting" class="hint" data-t="desk.waiting">Waiting for the phone…</p>
+      <div id="inspections"></div>
+    </div>
+  </div>
+</main>
+
+<script src="/static/common.js"></script>
+<script>
+  const Desk = { sessionId: null, lastId: 0, timer: null };
+
+  async function startSession() {
+    Desk.sessionId = (await (await fetch("/api/sessions", { method: "POST" })).json()).session_id;
+    Desk.lastId = 0;
+    $("inspections").innerHTML = "";
+    $("waiting").hidden = false;
+    // Not location.origin: if THIS screen opened /desk as localhost/127.0.0.1, that
+    // address only means "this same device" and a phone scanning it could never reach it.
+    const { url: base } = await (await fetch("/api/server-url")).json();
+    const link = `${base}/?session=${Desk.sessionId}`;
+    $("link").textContent = link;
+    $("qr").src = `/api/qr.png?text=${encodeURIComponent(link)}`;
+    if (Desk.timer) clearInterval(Desk.timer);
+    Desk.timer = setInterval(poll, 2000);
+  }
+
+  async function poll() {
+    const response = await fetch(`/api/inspections?session=${Desk.sessionId}&after_id=${Desk.lastId}`);
+    if (!response.ok) return;
+    for (const inspection of await response.json()) {
+      Desk.lastId = Math.max(Desk.lastId, inspection.id);
+      $("inspections").prepend(card(inspection));
+      $("waiting").hidden = true;
+    }
+  }
+
+  function card(inspection) {
+    const div = document.createElement("div");
+    div.className = "card " + inspection.status;
+    const statusText = {
+      ok: t("verdict.ok"),
+      differences_found: inspection.differences.length === 1 ? t("verdict.one_difference") : t("verdict.differences", { count: inspection.differences.length }),
+      alignment_failed: t("verdict.alignment_failed"),
+    }[inspection.status];
+    const readingsKey = readingsVerdict(inspection.readings_status);
+    div.innerHTML = `<h3></h3><p class="meta"></p><p><b class="status"></b> <span class="readings-status"></span></p>`;
+    div.querySelector("h3").textContent = inspection.product_name;
+    div.querySelector(".meta").textContent = `${t("desk.inspected_at")} ${inspection.created_at.replace("T", " ")}`
+      + (inspection.inspector ? ` · ${inspection.inspector}` : "") + (inspection.work_order ? ` · ${inspection.work_order}` : "");
+    div.querySelector(".status").textContent = statusText;
+    div.querySelector(".readings-status").textContent = readingsKey ? "· " + t(readingsKey) : "";
+
+    if (inspection.differences.length) {
+      const table = document.createElement("table");
+      table.innerHTML = `<thead><tr><th>#</th><th>${t("report.kind")}</th><th>ΔE</th><th>${t("report.decision")}</th></tr></thead><tbody></tbody>`;
+      for (const difference of inspection.differences) {
+        const tr = document.createElement("tr");
+        const decision = difference.decision ? t(difference.decision.decision === "confirm" ? "differences.confirmed" : "differences.dismissed") : t("differences.undecided");
+        tr.innerHTML = `<td>${difference.number}</td><td>${t(difference.kind === "content" ? "differences.content" : "differences.colour")}</td><td>${difference.mean_delta_e}</td><td>${decision}</td>`;
+        table.querySelector("tbody").append(tr);
+      }
+      div.append(table);
+    }
+    const readings = inspection.readings.filter((reading) => reading.name);
+    if (readings.length) {
+      const table = document.createElement("table");
+      table.innerHTML = `<thead><tr><th>${t("report.field")}</th><th>${t("report.read")}</th><th>${t("report.verdict")}</th></tr></thead><tbody></tbody>`;
+      for (const reading of readings) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td></td><td></td><td class="${readingClass(reading.valid)}"></td>`;
+        tr.children[0].textContent = reading.name.replaceAll("_", " ");
+        tr.children[1].textContent = reading.text ?? "—";
+        tr.children[2].textContent = readingWord(reading.valid) + (reading.reason ? ` (${reading.reason})` : "");
+        table.querySelector("tbody").append(tr);
+      }
+      div.append(table);
+    }
+    if (inspection.status !== "alignment_failed") {
+      const link = document.createElement("a");
+      link.href = `/runs/${inspection.run}/comparison.jpg`;
+      link.target = "_blank"; link.rel = "noopener";
+      link.textContent = t("report.comparison");
+      div.append(link);
+    }
+    return div;
+  }
+
+  function updateReportLink() {
+    $("report-link").href = `/report?day=${todayIso()}&lang=${Strings.language}`;
+  }
+
+  $("new-session").addEventListener("click", startSession);
+  document.addEventListener("languagechange", updateReportLink);
+
+  (async () => {
+    await loadStrings();
+    wireLanguageButtons();
+    updateReportLink();
+    await startSession();
+  })();
+</script>
+</body>
+</html>

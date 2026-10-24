@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackCheck zones</title>
+<link rel="stylesheet" href="/static/packcheck.css">
+</head>
+<body>
+<main class="wide">
+  <header>
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <h1 id="title" data-t-title="page.zones_title">Zones</h1>
+  </header>
+  <div class="topline">
+    <span id="signed-in" hidden><span data-t="login.signed_in_as">Signed in as</span> <b id="signed-in-name"></b>
+      <button type="button" id="sign-out" data-t="login.sign_out">Sign out</button></span>
+    <button type="button" data-language="en" aria-pressed="true">EN</button>
+    <button type="button" data-language="fr">FR</button>
+  </div>
+
+  <section id="login" hidden>
+    <h2 data-t="login.title">Sign in</h2>
+    <label for="login-name" data-t="login.name">Name</label>
+    <input id="login-name" type="text" autocomplete="username">
+    <label for="login-pin" data-t="login.pin">PIN</label>
+    <input id="login-pin" type="password" inputmode="numeric" autocomplete="current-password">
+    <p id="login-error" class="error-text" hidden></p>
+    <button class="button" id="login-button" type="button" data-t="login.button">Sign in</button>
+  </section>
+
+  <p data-t="zones.intro"></p>
+  <p class="hint" data-t="zones.draw_hint"></p>
+
+  <!-- The reference image is drawn on a canvas; zones are rectangles on top of it. Dragging
+       draws a new one. Coordinates are kept as FRACTIONS of the image (like product.json),
+       so the canvas can be any size on screen. -->
+  <div class="editor"><canvas id="canvas"></canvas></div>
+
+  <div id="zone-list"></div>
+  <button class="button" id="save" type="button" data-t="zones.save">Save zones</button>
+  <p id="message" hidden></p>
+</main>
+
+<script src="/static/common.js"></script>
+<script>
+  const productId = decodeURIComponent(location.pathname.split("/")[2]);
+  const Editor = { product: null, zones: [], image: new Image(), selected: -1, drag: null };
+  const canvas = $("canvas");
+  const context = canvas.getContext("2d");
+  const COLOURS = { variable: "#0089B6", ignore: "#8A9AA6" };
+
+  async function load() {
+    Editor.product = await (await fetch(`/api/products/${encodeURIComponent(productId)}`)).json();
+    Editor.zones = Editor.product.zones.map((zone) => ({ ...zone, expect: zone.expect || [] }));
+    $("title").textContent = `${t("page.zones_title")}: ${Editor.product.name}`;
+    Editor.image.onload = () => { canvas.width = Editor.image.width; canvas.height = Editor.image.height; draw(); };
+    Editor.image.src = `/api/products/${encodeURIComponent(productId)}/reference.png`;
+    renderList();
+  }
+
+  function draw() {
+    context.drawImage(Editor.image, 0, 0);
+    const scale = canvas.width / canvas.getBoundingClientRect().width;   // keep lines readable at any zoom
+    context.lineWidth = 3 * scale;
+    context.font = `${16 * scale}px system-ui, sans-serif`;
+    Editor.zones.forEach((zone, index) => {
+      const [x, y, w, h] = toPixels(zone.rect);
+      context.strokeStyle = COLOURS[zone.kind] || COLOURS.ignore;
+      context.fillStyle = context.strokeStyle;
+      if (index === Editor.selected) { context.globalAlpha = 0.15; context.fillRect(x, y, w, h); context.globalAlpha = 1; }
+      context.strokeRect(x, y, w, h);
+      context.fillText(zone.name, x + 4 * scale, y + h + 18 * scale);
+    });
+    if (Editor.drag) {
+      const [x, y, w, h] = normalise(Editor.drag);
+      context.strokeStyle = COLOURS.variable;
+      context.setLineDash([8 * scale, 6 * scale]);
+      context.strokeRect(x, y, w, h);
+      context.setLineDash([]);
+    }
+  }
+
+  function toPixels([x, y, w, h]) { return [x * canvas.width, y * canvas.height, w * canvas.width, h * canvas.height]; }
+  function toFractions([x, y, w, h]) { return [x / canvas.width, y / canvas.height, w / canvas.width, h / canvas.height].map((v) => Math.round(v * 10000) / 10000); }
+  function normalise({ x0, y0, x1, y1 }) { return [Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)]; }
+
+  function canvasPoint(event) {
+    const box = canvas.getBoundingClientRect();
+    return { x: (event.clientX - box.left) * canvas.width / box.width, y: (event.clientY - box.top) * canvas.height / box.height };
+  }
+
+  /* Pointer events work for mouse, touch and pen alike. */
+  canvas.addEventListener("pointerdown", (event) => {
+    const point = canvasPoint(event);
+    Editor.drag = { x0: point.x, y0: point.y, x1: point.x, y1: point.y };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!Editor.drag) return;
+    const point = canvasPoint(event);
+    Editor.drag.x1 = point.x; Editor.drag.y1 = point.y;
+    draw();
+  });
+  canvas.addEventListener("pointerup", (event) => {
+    if (!Editor.drag) return;
+    const [x, y, w, h] = normalise(Editor.drag);
+    Editor.drag = null;
+    if (w < 8 || h < 8) {                        // a tap: select the zone under it
+      Editor.selected = Editor.zones.findIndex((zone) => { const [zx, zy, zw, zh] = toPixels(zone.rect); return x >= zx && x <= zx + zw && y >= zy && y <= zy + zh; });
+      renderList(); draw(); return;
+    }
+    Editor.zones.push({ name: `zone_${Editor.zones.length + 1}`, kind: "variable", rect: toFractions([x, y, w, h]), expect: [] });
+    Editor.selected = Editor.zones.length - 1;
+    renderList(); draw();
+  });
+
+  function renderList() {
+    $("zone-list").innerHTML = "";
+    Editor.zones.forEach((zone, index) => {
+      const row = document.createElement("div");
+      row.className = "zone-row" + (index === Editor.selected ? " selected" : "");
+      row.innerHTML = `<div class="fields">
+          <div><label>${t("zones.name")}</label><input type="text" class="name"></div>
+          <div><label>${t("zones.kind")}</label><select class="kind">
+            <option value="variable">${t("zones.kind_variable")}</option><option value="ignore">${t("zones.kind_ignore")}</option></select></div>
+          <div class="rect"></div>
+          <div class="expect"><label>${t("zones.expect")}</label><textarea class="expect-json"></textarea></div>
+        </div>
+        <button type="button" class="button small secondary delete">${t("zones.delete")}</button>`;
+      row.querySelector(".name").value = zone.name;
+      row.querySelector(".kind").value = zone.kind;
+      row.querySelector(".rect").textContent = `rect: [${zone.rect.join(", ")}]`;
+      row.querySelector(".expect-json").value = JSON.stringify(zone.expect, null, 1);
+      row.querySelector(".expect").hidden = zone.kind !== "variable";
+
+      row.querySelector(".name").addEventListener("input", (event) => { zone.name = event.target.value; draw(); });
+      row.querySelector(".kind").addEventListener("change", (event) => { zone.kind = event.target.value; row.querySelector(".expect").hidden = zone.kind !== "variable"; draw(); });
+      row.querySelector(".expect-json").addEventListener("input", (event) => {
+        try { zone.expect = JSON.parse(event.target.value || "[]"); event.target.style.borderColor = ""; }
+        catch (error) { event.target.style.borderColor = "#D6006F"; }
+      });
+      row.querySelector(".delete").addEventListener("click", () => { Editor.zones.splice(index, 1); Editor.selected = -1; renderList(); draw(); });
+      row.addEventListener("focusin", () => { Editor.selected = index; draw(); for (const other of $("zone-list").children) other.classList.toggle("selected", other === row); });
+      $("zone-list").append(row);
+    });
+  }
+
+  $("save").addEventListener("click", async () => {
+    if (!mayAct()) { showMessage(t("error.not_signed_in"), true); return; }
+    const zones = Editor.zones.map((zone) => ({ name: zone.name, kind: zone.kind, rect: zone.rect, expect: zone.kind === "variable" ? zone.expect : [] }));
+    const response = await fetch(`/api/products/${encodeURIComponent(productId)}/zones`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ zones }),
+    });
+    const body = await response.json();
+    if (!response.ok) { showMessage(body.detail || t("error.generic"), true); return; }
+    showMessage(t("zones.saved"), false);
+  });
+
+  function showMessage(text, isError) {
+    $("message").textContent = text;
+    $("message").className = isError ? "error-text" : "ok-text";
+    $("message").hidden = false;
+  }
+
+  window.addEventListener("resize", draw);
+  document.addEventListener("languagechange", () => { renderList(); $("title").textContent = `${t("page.zones_title")}: ${Editor.product.name}`; });
+
+  (async () => {
+    await loadStrings();
+    wireLanguageButtons();
+    wireLogin();
+    await refreshLogin();
+    await load();
+  })();
+</script>
+</body>
+</html>

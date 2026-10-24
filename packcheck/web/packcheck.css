@@ -1,0 +1,237 @@
+/* Shared look of every page: a dark control panel, like the software on a weighing
+   terminal or a lab instrument rather than a web site.
+
+   WHY dark: the pack, the artwork and every close-up are LIGHT images. On a dark screen
+   they are the only bright things, so the eye goes to the evidence instead of to the
+   chrome around it. It also glares less in a dim goods-in area.
+
+   The two loud colours still mean what they mean on the comparison image: magenta is a
+   difference, cyan is a zone. They are lighter here than the print-shop inks the pipeline
+   draws with (#D6006F, #0089B6), because those are too dark to read on a dark background.
+   Same meaning, adjusted for the medium.
+
+   Colour is never the only signal - every status is also a word - and the type stays
+   large, because this is used with one thumb, sometimes with a glove on.
+
+   The printed report is NOT styled from here (see report.py): paper is white. */
+:root {
+  --bg: #0B1116;          /* the page */
+  --chrome: #10161C;      /* the bar at the top */
+  --panel: #18212A;       /* a row or card: the thing you read */
+  --sunk: #0F161C;        /* inside an input */
+  --edge: #2A3742;        /* border between panels */
+  --edge-input: #3C4D5C;  /* edge of something you can type in: brighter, so it reads as a field */
+  --text: #E6EDF3;        /* main text */
+  --dim: #8DA0B0;         /* second-line text: hints, units, meta */
+
+  --magenta: #FF3D8B;     /* a difference */
+  --cyan: #35C4F0;        /* a zone, and the main action */
+  --pass: #3FD07F;        /* valid */
+  --amber: #FFC53D;       /* check this by hand */
+
+  /* Text to put ON one of those four fills. They are bright, so it must be dark. */
+  --on-bright: #08121A;
+
+  /* Tells the browser to draw ITS parts dark too - scrollbars, the file picker, the
+     spinner in a date field. One line, or the page has light scrollbars on a dark page. */
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 1.0625rem/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Figures all the same width, so a column of ΔE numbers and dates lines up. */
+  font-variant-numeric: tabular-nums;
+}
+main { max-width: 40rem; margin: 0 auto; padding: 1.25rem 1.25rem 4rem; }
+main.wide { max-width: 64rem; }
+
+/* The bar. <header> and .topline are two separate elements in the HTML, so they are given
+   the same background and pulled out to the edges with negative margins: together they
+   read as one strip of chrome above the work. */
+header, .topline {
+  margin-left: -1.25rem; margin-right: -1.25rem;
+  padding-left: 1.25rem; padding-right: 1.25rem;
+  background: var(--chrome);
+}
+header {
+  display: flex; align-items: center; gap: 0.625rem;
+  margin-top: -1.25rem; padding-top: 0.75rem; padding-bottom: 0.625rem;
+}
+header svg { width: 1.375rem; height: 1.375rem; flex: none; color: var(--magenta); }
+header h1 { flex: 1; }
+h1 { margin: 0; font-size: 1.125rem; line-height: 1.2; font-weight: 700; letter-spacing: 0.01em; }
+/* Section headings are small, spaced capitals: a label on a panel, not a headline. */
+h2 {
+  margin: 1.75rem 0 0.5rem; font-size: 0.6875rem; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim);
+}
+.topline {
+  display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; flex-wrap: wrap;
+  margin-top: 0; padding-top: 0.5rem; padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--edge); font-size: 0.875rem;
+}
+.topline button, .link-button {
+  padding: 0.3125rem 0.625rem; font: inherit; font-size: 0.875rem; font-weight: 600;
+  color: var(--dim); background: transparent; border: 1px solid var(--edge); border-radius: 3px;
+  cursor: pointer; text-decoration: none; display: inline-block;
+}
+.topline button:hover, .link-button:hover { color: var(--text); border-color: var(--dim); }
+/* The chosen language. Filled, but in a neutral - a bright fill up here would pull the
+   eye away from the verdict, which is the one thing that should shout. */
+.topline button[aria-pressed="true"] { background: var(--edge); color: var(--text); border-color: var(--dim); }
+
+label { display: block; margin: 1.25rem 0 0.375rem; font-weight: 600; font-size: 0.9375rem; }
+select, input[type="text"], input[type="password"], input[type="search"], textarea {
+  width: 100%; padding: 0.8125rem 0.875rem; font: inherit; color: var(--text);
+  background: var(--sunk); border: 1px solid var(--edge-input); border-radius: 3px;
+}
+input::placeholder, textarea::placeholder { color: var(--dim); }
+textarea { min-height: 5rem; font-family: ui-monospace, Consolas, monospace; font-size: 0.9rem; }
+
+/* The main action is cyan with dark text: the brightest thing on the page after the
+   photographs, which is what a "do it now" button should be. */
+.button {
+  display: block; width: 100%; margin-top: 1rem; padding: 1rem; text-align: center;
+  font: inherit; font-weight: 700; font-size: 1.0625rem; cursor: pointer;
+  color: var(--on-bright); background: var(--cyan);
+  border: 1px solid var(--cyan); border-radius: 3px;
+}
+.button.secondary { color: var(--text); background: transparent; border-color: var(--edge); }
+.button.secondary:hover { border-color: var(--dim); }
+.button.small { display: inline-block; width: auto; margin: 0.5rem 0.5rem 0 0; padding: 0.5625rem 1rem; font-size: 0.9375rem; }
+.button.done { border-color: var(--pass); color: var(--pass); background: transparent; }
+/* Confirm / dismiss: outlined until chosen, filled once chosen, so a decided difference
+   is obvious without reading the label under it. Filled means DARK text - these colours
+   are too bright to carry white. */
+.button.confirm { border-color: var(--magenta); color: var(--magenta); background: transparent; }
+.button.confirm[aria-pressed="true"] { background: var(--magenta); color: var(--on-bright); }
+.button.dismiss { background: transparent; color: var(--dim); border-color: var(--edge); }
+.button.dismiss[aria-pressed="true"] { background: var(--edge); color: var(--text); border-color: var(--edge); }
+input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+select:focus-visible, .button:focus-visible, input:focus-visible, textarea:focus-visible, input[type="file"]:focus-visible + .button {
+  outline: 2px solid var(--cyan); outline-offset: 2px;
+}
+
+#checking {
+  display: flex; align-items: center; gap: 0.75rem; margin-top: 1.25rem;
+  padding: 1rem 1.125rem; background: var(--panel); border: 1px solid var(--edge); border-radius: 3px;
+  font-weight: 600;
+}
+#checking svg, .spinner { width: 2rem; height: 2rem; color: var(--cyan); animation: turn 1.6s linear infinite; }
+@keyframes turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #checking svg, .spinner { animation: none; } }
+
+/* The verdict. On a dark page a solid slab of colour is glaring, so it is a tinted box
+   with a thick bar down the side and the sentence itself in the status colour. */
+.verdict {
+  margin-top: 1.25rem; padding: 1rem 1.125rem;
+  background: var(--panel); border: 1px solid var(--edge); border-left: 5px solid var(--dim);
+  border-radius: 3px; font-size: 1.3125rem; font-weight: 700; line-height: 1.2;
+}
+.verdict.ok { color: var(--pass); border-left-color: var(--pass); background: rgba(63, 208, 127, 0.10); }
+.verdict.differences_found, .verdict.invalid {
+  color: var(--magenta); border-left-color: var(--magenta); background: rgba(255, 61, 139, 0.10);
+}
+.verdict.alignment_failed, .verdict.error, .verdict.check_by_hand, .verdict.retake {
+  color: var(--amber); border-left-color: var(--amber); background: rgba(255, 197, 61, 0.10);
+}
+.verdict.readings { margin-top: 0.5rem; padding: 0.75rem 1.125rem; font-size: 1.0625rem; }
+#explanation, .explanation { margin: 0.75rem 0 0; }
+.warning {
+  margin: 0.75rem 0 0; padding: 0.625rem 0.875rem;
+  background: rgba(255, 197, 61, 0.09); border-left: 3px solid var(--amber);
+  font-size: 0.9375rem;
+}
+.error-text { color: var(--magenta); font-weight: 600; margin: 0.5rem 0 0; }
+.ok-text { color: var(--pass); font-weight: 600; margin: 0.5rem 0 0; }
+
+#comparison, .comparison { display: block; margin-top: 1rem; border: 1px solid var(--edge); }
+#comparison img, .comparison img { display: block; width: 100%; height: auto; }
+.hint { margin: 0.375rem 0 0; font-size: 0.9375rem; color: var(--dim); }
+
+/* One difference = one panel row. */
+ol.differences { list-style: none; margin: 0; padding: 0; }
+ol.differences li {
+  display: flex; gap: 0.875rem; padding: 0.875rem 1rem; margin-bottom: 0.5rem;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 3px;
+}
+ol.differences li > span:last-child { flex: 1; min-width: 0; }
+.number {
+  flex: none; width: 1.625rem; height: 1.625rem; display: grid; place-items: center;
+  background: var(--magenta); color: var(--on-bright); font-weight: 800; font-size: 0.875rem;
+  border-radius: 2px;
+}
+.kind { font-weight: 700; }
+.detail { display: block; margin-top: 0.125rem; color: var(--dim); font-size: 0.9375rem; }
+.closeup { display: block; max-width: 100%; margin-top: 0.625rem; border: 1px solid var(--edge); }
+.decision { display: block; margin-top: 0.5rem; font-weight: 600; font-size: 0.9375rem; }
+.decision.confirmed { color: var(--magenta); } .decision.dismissed { color: var(--dim); }
+.note { margin-top: 0.625rem; }
+
+.zone {
+  margin-top: 0.75rem; padding: 0.875rem 1rem;
+  background: var(--panel); border: 1px solid var(--edge); border-left: 3px solid var(--cyan);
+  border-radius: 3px;
+}
+.zone img { display: block; max-width: 100%; border: 1px solid var(--edge); }
+.zone .zone-name {
+  display: block; margin-top: 0.625rem; font-size: 0.6875rem; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--cyan);
+}
+.readings { margin: 0.375rem 0 0; padding: 0; list-style: none; }
+.readings li { padding: 0.5rem 0; border-top: 1px solid var(--edge); font-size: 0.9375rem; }
+.readings li:first-child { border-top: 0; }
+.readings .text { font-family: ui-monospace, Consolas, monospace; }
+.readings .valid { color: var(--pass); font-weight: 700; }
+.readings .invalid { color: var(--magenta); font-weight: 700; }
+.readings .check { color: var(--amber); font-weight: 700; }
+.readings .detail { display: inline; }
+
+.faces { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+.faces .button { flex: 1 1 10rem; margin: 0; }
+
+/* Product-identification chooser: candidate buttons side by side. */
+.candidates { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.candidates .button { flex: 1 1 10rem; margin: 0; }
+
+/* <details> used for "pick manually" and "open on your phone": read as a plain link until opened. */
+details > summary { cursor: pointer; font-weight: 600; font-size: 0.9375rem; color: var(--cyan); margin-top: 1.5rem; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::before { content: "▸ "; }
+details[open] > summary::before { content: "▾ "; }
+#phone-qr { margin: 1rem 0 0; }
+#phone-qr .qr { max-width: 12rem; margin-top: 0.75rem; }
+#pack-status { font-weight: 600; color: var(--text); }
+
+/* Desk screen */
+.desk { display: grid; grid-template-columns: minmax(16rem, 20rem) 1fr; gap: 2rem; margin-top: 1.5rem; }
+@media (max-width: 48rem) { .desk { grid-template-columns: 1fr; } }
+/* A QR code only scans as black on WHITE, so this one keeps its white card on a dark page. */
+.qr { display: block; width: 100%; max-width: 20rem; padding: 0.75rem; background: #fff; border-radius: 3px; }
+.link-text { word-break: break-all; font-family: ui-monospace, Consolas, monospace; font-size: 0.8125rem; color: var(--dim); }
+.card {
+  background: var(--panel); border: 1px solid var(--edge); border-left: 4px solid var(--edge);
+  border-radius: 3px; padding: 0.875rem 1rem; margin-bottom: 0.75rem;
+}
+.card.ok { border-left-color: var(--pass); } .card.differences_found { border-left-color: var(--magenta); } .card.alignment_failed { border-left-color: var(--amber); }
+.card h3 { margin: 0 0 0.25rem; font-size: 1.0625rem; }
+.card .meta { font-size: 0.875rem; color: var(--dim); }
+.card table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; font-size: 0.9375rem; }
+.card th { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.card th, .card td { text-align: left; padding: 0.3125rem 0.5rem 0.3125rem 0; border-bottom: 1px solid var(--edge); vertical-align: top; }
+.card .valid { color: var(--pass); } .card .invalid { color: var(--magenta); } .card .check { color: var(--amber); }
+
+/* Zone editor. The artwork itself is a light image, so the canvas keeps a white bed. */
+.editor { position: relative; margin-top: 1rem; touch-action: none; }
+.editor canvas { display: block; width: 100%; height: auto; border: 1px solid var(--edge); background: #fff; cursor: crosshair; }
+.zone-row { background: var(--panel); border: 1px solid var(--edge); border-radius: 3px; padding: 0.875rem 1rem; margin-top: 0.75rem; }
+.zone-row.selected { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan); }
+.zone-row .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; }
+.zone-row label { margin: 0.25rem 0 0.25rem; }
+.zone-row .rect { grid-column: 1 / -1; font-family: ui-monospace, Consolas, monospace; font-size: 0.8125rem; color: var(--dim); }
+.zone-row .expect { grid-column: 1 / -1; }
+
+[hidden] { display: none !important; }

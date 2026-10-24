@@ -1,0 +1,35 @@
+{
+  "product_id": "demo-dog-food-front",
+  "name": "Demo dog food 2 kg - front",
+  "pack": "demo-dog-food",
+  "face": "front",
+  "barcode": "4001234567890",
+  "reference_image": "reference.png",
+  "zones": [
+    {
+      "name": "best_before_lot",
+      "kind": "variable",
+      "rect": [
+        0.59,
+        0.8357,
+        0.36,
+        0.1214
+      ],
+      "expect": [
+        {
+          "name": "best_before",
+          "kind": "date",
+          "formats": [
+            "%Y-%m-%d"
+          ],
+          "min_days_ahead": 180
+        },
+        {
+          "name": "lot",
+          "kind": "code",
+          "pattern": "L[0-9]{5}[A-Z]"
+        }
+      ]
+    }
+  ]
+}

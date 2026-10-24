@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackCheck</title>
+<link rel="stylesheet" href="/static/packcheck.css">
+</head>
+<body>
+<main>
+  <header>
+    <!-- A printer's registration mark: the target used to check that inks line up. -->
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <h1 data-t="page.check_title" data-t-title="page.check_title">Check a package</h1>
+  </header>
+  <div class="topline">
+    <a class="link-button" href="/desk" data-t="capture.desk_link">Desk screen ↗</a>
+    <span id="signed-in" hidden><span data-t="login.signed_in_as">Signed in as</span> <b id="signed-in-name"></b>
+      <button type="button" id="sign-out" data-t="login.sign_out">Sign out</button></span>
+    <button type="button" data-language="en" aria-pressed="true">EN</button>
+    <button type="button" data-language="fr">FR</button>
+  </div>
+
+  <!-- A plain convenience QR: scan it to open this same page on a phone, no pairing
+       involved. /desk (linked above) is the fuller hand-off, where results also appear
+       on a second screen; this is just "get the app open on your phone". -->
+  <details id="phone-qr">
+    <summary data-t="capture.open_on_phone">Open this on your phone</summary>
+    <img id="phone-qr-img" class="qr" alt="QR code linking to this page">
+  </details>
+
+  <!-- Shown only once users exist on the server and nobody is signed in. -->
+  <section id="login" hidden>
+    <h2 data-t="login.title">Sign in</h2>
+    <label for="login-name" data-t="login.name">Name</label>
+    <input id="login-name" type="text" autocomplete="username">
+    <label for="login-pin" data-t="login.pin">PIN</label>
+    <input id="login-pin" type="password" inputmode="numeric" autocomplete="current-password">
+    <p id="login-error" class="error-text" hidden></p>
+    <button class="button" id="login-button" type="button" data-t="login.button">Sign in</button>
+  </section>
+
+  <section id="capture">
+    <p class="hint" id="paired" hidden data-t="capture.paired"></p>
+    <p class="hint" id="pack-status" hidden></p>
+
+    <label for="work-order" data-t="capture.work_order">Work order (optional)</label>
+    <input id="work-order" type="text" autocomplete="off">
+    <div id="inspector-block">
+      <label for="inspector" data-t="capture.inspector">Your name</label>
+      <input id="inspector" type="text" autocomplete="off">
+    </div>
+
+    <!-- No product is chosen here: the server works out which one this is FROM the photo
+         (see identify.py). capture="environment" opens the back camera directly on phones;
+         on a computer the same input opens a file picker. -->
+    <input id="photo" type="file" accept="image/*" capture="environment">
+    <label for="photo" class="button" data-t="capture.take_photo">Take photo</label>
+    <p class="hint" data-t="capture.hint">Lay the pack flat, fill the frame with the whole face, avoid reflections.</p>
+
+    <details id="manual-pick">
+      <summary data-t="capture.pick_manually">Pick the product yourself</summary>
+      <label for="search" data-t="capture.product">Product</label>
+      <input id="search" type="search" data-t-placeholder="capture.search" autocomplete="off">
+      <select id="product" size="1"></select>
+      <input id="barcode-photo" type="file" accept="image/*" capture="environment">
+      <label for="barcode-photo" class="button secondary" data-t="capture.scan_barcode">Scan the pack's barcode to pick it</label>
+      <p id="barcode-message" class="error-text" hidden></p>
+      <!-- Hidden: opened programmatically by #manual-use, once a product is chosen above. -->
+      <input id="manual-photo-input" type="file" accept="image/*" capture="environment">
+      <button class="button" id="manual-use" type="button" data-t="capture.use_this_product">Use this product</button>
+    </details>
+  </section>
+
+  <!-- Shown instead of a result when the photo could not be matched to exactly one
+       product on its own: never guess which product it is, ask instead. -->
+  <section id="chooser" hidden aria-live="polite">
+    <div id="chooser-verdict" class="verdict retake"></div>
+    <p id="chooser-message"></p>
+    <div id="chooser-candidates" class="candidates"></div>
+    <p class="hint" data-t="chooser.pick_hint">Or pick it yourself:</p>
+    <label for="chooser-search" data-t="capture.product">Product</label>
+    <input id="chooser-search" type="search" data-t-placeholder="capture.search" autocomplete="off">
+    <select id="chooser-product" size="1"></select>
+    <input id="chooser-barcode-photo" type="file" accept="image/*" capture="environment">
+    <label for="chooser-barcode-photo" class="button secondary" data-t="capture.scan_barcode">Scan the pack's barcode to pick it</label>
+    <p id="chooser-barcode-message" class="error-text" hidden></p>
+    <button class="button" id="chooser-use" type="button" data-t="capture.use_this_product">Use this product</button>
+    <button class="button secondary" id="chooser-retake" type="button" data-t="chooser.retake">Retake the photo</button>
+  </section>
+
+  <div id="checking" hidden role="status">
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <span data-t="checking">Checking the photo…</span>
+  </div>
+
+  <section id="result" hidden aria-live="polite">
+    <div id="verdict" class="verdict"></div>
+    <p id="identified-as" class="hint"></p>
+    <div id="readings-verdict" class="verdict readings" hidden></div>
+    <p id="explanation"></p>
+    <div id="warnings"></div>
+
+    <a id="comparison" target="_blank" rel="noopener"><img alt=""></a>
+    <p class="hint" id="comparison-hint" data-t="comparison.hint"></p>
+
+    <div id="differences-block">
+      <h2 data-t="differences.title">Differences</h2>
+      <ol id="differences" class="differences"></ol>
+    </div>
+
+    <div id="zones-block">
+      <h2 data-t="readings.title">Read on the pack</h2>
+      <p class="hint" data-t="readings.hint"></p>
+      <div id="zones"></div>
+    </div>
+
+    <button class="button" id="next-face" type="button" hidden data-t="next_face">Photograph the next face</button>
+    <button class="button secondary" id="again" type="button" data-t="again">Check another package</button>
+  </section>
+</main>
+
+<script src="/static/common.js"></script>
+<script>
+  /* ---- state ----------------------------------------------------------- */
+  const State = {
+    products: [],          // flat list from /api/products, each a single face
+    packId: null,          // groups the faces of ONE physical pack in the database
+    doneFaces: new Set(),  // product_ids already inspected under the current packId
+    sessionId: new URLSearchParams(location.search).get("session"),
+    pendingFile: null,     // a photo the server could not identify on its own, waiting on a manual pick
+    manualProductId: null, // set right before opening the camera for a manually-chosen product
+  };
+
+  /* ---- products (only needed for the manual override and "which faces remain") ------ */
+  async function loadProducts() {
+    State.products = await (await fetch("/api/products")).json();
+    renderProductOptions($("product"), State.products);
+    renderProductOptions($("chooser-product"), State.products);
+  }
+
+  function renderProductOptions(select, products) {
+    select.innerHTML = "";
+    for (const product of products) {
+      const option = document.createElement("option");
+      option.value = product.product_id;
+      option.textContent = product.name;
+      select.append(option);
+    }
+  }
+
+  function packmatesOf(productId) {
+    // Every face that belongs to the same physical pack as `productId` (including itself).
+    // A product with no "pack" is a pack of one face.
+    const product = State.products.find((p) => p.product_id === productId);
+    if (!product) return [];
+    return product.pack ? State.products.filter((p) => p.pack === product.pack) : [product];
+  }
+
+  $("search").addEventListener("input", () => filterOptions($("search"), $("product"), State.products));
+  $("chooser-search").addEventListener("input", () => filterOptions($("chooser-search"), $("chooser-product"), State.products));
+
+  function filterOptions(searchInput, select, products) {
+    const needle = searchInput.value.trim().toLowerCase();
+    renderProductOptions(select, products.filter((product) => product.name.toLowerCase().includes(needle)));
+  }
+
+  /* ---- pick the product by photographing its barcode ---------------------- */
+  wireBarcodeScan($("barcode-photo"), $("barcode-message"), $("product"));
+  wireBarcodeScan($("chooser-barcode-photo"), $("chooser-barcode-message"), $("chooser-product"));
+
+  function wireBarcodeScan(input, messageBox, select) {
+    input.addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      event.target.value = "";
+      if (!file) return;
+      messageBox.hidden = true;
+      const form = new FormData();
+      form.append("photo", file);
+      const found = await (await fetch("/api/products/lookup", { method: "POST", body: form })).json();
+      if (!found.codes || !found.codes.length) return showMessage(messageBox, t("capture.barcode_unreadable"));
+      if (!found.products.length) return showMessage(messageBox, t("capture.barcode_not_found"));
+      // A barcode identifies the PACK, not a specific face: several products can share one
+      // (the demo's front and back do). Narrow the list to only what matched; if that is
+      // still more than one, the worker picks the face from this short list.
+      renderProductOptions(select, found.products);
+      select.value = found.products[0].product_id;
+      if (found.products.length > 1) showMessage(messageBox, t("chooser.barcode_multiple", { count: found.products.length }), false);
+    });
+  }
+
+  function showMessage(box, text, isError = true) {
+    box.textContent = text;
+    box.className = isError ? "error-text" : "hint";
+    box.hidden = false;
+  }
+
+  /* ---- taking a photo: identified automatically, or explicitly ------------- */
+  $("photo").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (file) submitPhoto(file, null);   // null product_id = let the server identify it
+  });
+
+  $("manual-use").addEventListener("click", () => {
+    if (!$("product").value) return;
+    State.manualProductId = $("product").value;
+    $("manual-photo-input").click();     // opens the camera / file picker for THIS product
+  });
+  $("manual-photo-input").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (file) submitPhoto(file, State.manualProductId);
+  });
+
+  $("chooser-use").addEventListener("click", () => {
+    if (State.pendingFile && $("chooser-product").value) submitPhoto(State.pendingFile, $("chooser-product").value);
+  });
+  $("chooser-retake").addEventListener("click", () => {
+    State.pendingFile = null;
+    $("chooser").hidden = true;
+    $("capture").hidden = false;
+  });
+
+  /* ---- one inspection ------------------------------------------------------ */
+  async function submitPhoto(file, productId) {
+    if (!mayAct()) { alert(t("error.not_signed_in")); return; }
+    $("capture").hidden = true;
+    $("chooser").hidden = true;
+    $("result").hidden = true;
+    $("checking").hidden = false;
+    remember("work_order", $("work-order").value);
+    remember("inspector", $("inspector").value);
+
+    // Several faces of the same physical pack share one pack id.
+    if (!State.packId) State.packId = (await (await fetch("/api/packs", { method: "POST" })).json()).pack_id;
+
+    const form = new FormData();
+    if (productId) form.append("product_id", productId);
+    form.append("photo", file);
+    form.append("work_order", $("work-order").value);
+    form.append("inspector", $("inspector").value);
+    form.append("pack_id", State.packId);
+    if (State.sessionId) form.append("session_id", State.sessionId);
+
+    try {
+      const response = await fetch("/api/inspections", { method: "POST", body: form });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || t("error.generic"));
+
+      if (body.status === "identify_ambiguous" || body.status === "identify_failed") {
+        State.pendingFile = file;
+        $("checking").hidden = true;
+        showChooser(body);
+        return;
+      }
+      State.pendingFile = null;
+      State.doneFaces.add(body.product_id);
+      showResult(body);
+    } catch (error) {
+      showResult({ status: "error", message: error.message, warnings: [], differences: [], variable_zones: [] });
+    }
+    $("checking").hidden = true;
+    $("result").hidden = false;
+    window.scrollTo(0, 0);
+  }
+
+  /* Shown when the server could not tell which product the photo is on its own: never
+     guess, ask instead. Tapping a candidate, or picking manually, resubmits the SAME
+     photo - the worker does not need to take it again. */
+  function showChooser(body) {
+    $("chooser-verdict").textContent = body.status === "identify_ambiguous" ? t("chooser.ambiguous_title") : t("chooser.failed_title");
+    $("chooser-message").textContent = body.message;
+    $("chooser-candidates").innerHTML = "";
+    for (const candidate of body.candidates) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button";
+      button.textContent = candidate.name;
+      button.addEventListener("click", () => submitPhoto(State.pendingFile, candidate.product_id));
+      $("chooser-candidates").append(button);
+    }
+    renderProductOptions($("chooser-product"), State.products);
+    $("chooser").hidden = false;
+    window.scrollTo(0, 0);
+  }
+
+  function showResult(result) {
+    const count = result.differences ? result.differences.length : 0;
+    const titles = {
+      ok: t("verdict.ok"),
+      differences_found: count === 1 ? t("verdict.one_difference") : t("verdict.differences", { count }),
+      alignment_failed: t("verdict.alignment_failed"),
+      error: t("verdict.error"),
+    };
+    $("verdict").className = "verdict " + result.status;
+    $("verdict").textContent = titles[result.status];
+    $("explanation").textContent = result.status === "alignment_failed" || result.status === "error" ? result.message : "";
+    $("explanation").hidden = $("explanation").textContent === "";
+
+    // A worker should always be able to see, at a glance, WHICH product was checked - it
+    // is easy to catch an obviously wrong auto-pick just by reading its name.
+    $("identified-as").textContent = result.product_name ? `${t("capture.product")}: ${result.product_name}` : "";
+    $("identified-as").hidden = !result.product_name;
+
+    const readingsKey = readingsVerdict(result.readings_status);
+    $("readings-verdict").hidden = !readingsKey;
+    if (readingsKey) {
+      $("readings-verdict").className = "verdict readings " + result.readings_status;
+      $("readings-verdict").textContent = t(readingsKey);
+    }
+
+    $("warnings").innerHTML = "";
+    if (result.glare && result.glare.fraction > 0) {
+      addWarning(t("glare.warning", { percent: Math.round(result.glare.fraction * 100) }));
+    }
+    for (const warning of result.warnings) addWarning(warning);
+
+    const hasImage = Boolean(result.comparison_image);
+    $("comparison").hidden = !hasImage;
+    $("comparison-hint").hidden = !hasImage;
+    if (hasImage) {
+      const url = `/runs/${result.run}/${result.comparison_image}`;
+      $("comparison").href = url;
+      $("comparison").querySelector("img").src = url;
+      $("comparison").querySelector("img").alt = t("comparison.alt");
+    }
+
+    $("differences").innerHTML = "";
+    $("differences-block").hidden = count === 0;
+    for (const difference of result.differences) $("differences").append(differenceItem(result, difference));
+
+    $("zones").innerHTML = "";
+    $("zones-block").hidden = result.variable_zones.length === 0;
+    for (const zone of result.variable_zones) $("zones").append(zoneItem(result, zone));
+
+    const mates = result.product_id ? packmatesOf(result.product_id) : [];
+    const remaining = mates.filter((face) => !State.doneFaces.has(face.product_id));
+    $("next-face").hidden = remaining.length === 0 || result.status === "error";
+  }
+
+  function addWarning(text) {
+    const p = document.createElement("p");
+    p.className = "warning";
+    p.textContent = text;
+    $("warnings").append(p);
+  }
+
+  /* One difference: number, explanation, close-up, and the Confirm / Dismiss buttons. The
+     decision is stored with the worker's name and time; it is what the report shows, and it
+     is also future training data for a false-alarm filter. */
+  function differenceItem(result, difference) {
+    const li = document.createElement("li");
+    const title = t(difference.kind === "content" ? "differences.content" : "differences.colour");
+    const detail = t(difference.kind === "content" ? "differences.content_detail" : "differences.colour_detail");
+    li.innerHTML = `<span class="number">${difference.number}</span>
+      <span><span class="kind"></span>
+      <span class="detail"></span>
+      <img class="closeup" alt="">
+      <input type="text" class="note" data-t-placeholder="differences.note">
+      <div class="decision-buttons"></div>
+      <span class="decision" hidden></span></span>`;
+    li.querySelector(".kind").textContent = title;
+    li.querySelector(".detail").textContent = `${detail} ${t("differences.strength")}: ${difference.mean_delta_e} ΔE.`;
+    li.querySelector(".closeup").src = `/runs/${result.run}/${difference.closeup}`;
+    li.querySelector(".closeup").alt = t("differences.closeup_alt");
+    li.querySelector(".note").placeholder = t("differences.note");
+
+    for (const decision of ["confirm", "dismiss"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button small " + decision;
+      button.textContent = t("differences." + decision);
+      button.addEventListener("click", () => decide(li, difference, decision));
+      li.querySelector(".decision-buttons").append(button);
+    }
+    return li;
+  }
+
+  async function decide(li, difference, decision) {
+    if (!mayAct()) { alert(t("error.not_signed_in")); return; }
+    const response = await fetch(`/api/differences/${difference.id}/decisions`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, note: li.querySelector(".note").value, decided_by: $("inspector").value }),
+    });
+    if (!response.ok) { alert(t("error.generic")); return; }
+    const saved = await response.json();
+    for (const button of li.querySelectorAll(".decision-buttons button")) {
+      button.setAttribute("aria-pressed", String(button.classList.contains(decision)));
+    }
+    const label = li.querySelector(".decision");
+    label.className = "decision " + (decision === "confirm" ? "confirmed" : "dismissed");
+    label.textContent = t(decision === "confirm" ? "differences.confirmed" : "differences.dismissed")
+      + (saved.decided_by ? ` (${t("differences.by")} ${saved.decided_by})` : "");
+    label.hidden = false;
+  }
+
+  /* One variable zone: the crop, what was read, and the verdict of each rule. */
+  function zoneItem(result, zone) {
+    const div = document.createElement("div");
+    div.className = "zone";
+    const img = document.createElement("img");
+    img.src = `/runs/${result.run}/${zone.crop}`;
+    img.alt = zone.name;
+    const name = document.createElement("span");
+    name.className = "zone-name";
+    name.textContent = zone.name.replaceAll("_", " ");
+    const list = document.createElement("ul");
+    list.className = "readings";
+    if (zone.readings && zone.readings.length) {
+      for (const reading of zone.readings) {
+        const li = document.createElement("li");
+        li.innerHTML = `<b></b>: <span class="text"></span> <span class="${readingClass(reading.valid)}"></span> <span class="detail"></span>`;
+        li.querySelector("b").textContent = reading.name.replaceAll("_", " ");
+        li.querySelector(".text").textContent = reading.text ?? "—";
+        li.querySelector("." + readingClass(reading.valid)).textContent = readingWord(reading.valid);
+        li.querySelector(".detail").textContent = reading.reason || "";
+        list.append(li);
+      }
+    } else {
+      const li = document.createElement("li");
+      li.textContent = `${t("readings.read_as")}: ${zone.text ?? t("readings.nothing_read")}`;
+      list.append(li);
+    }
+    div.append(img, name, list);
+    return div;
+  }
+
+  /* ---- navigation ------------------------------------------------------------ */
+
+  // While a pack is in progress, show which faces are already checked and which remain -
+  // a worker photographing front then back should not have to remember on their own.
+  function updatePackStatus() {
+    const lastDone = [...State.doneFaces].pop();
+    const mates = lastDone ? packmatesOf(lastDone) : [];
+    if (mates.length <= 1) { $("pack-status").hidden = true; return; }
+    $("pack-status").textContent = mates.map((mate) => (mate.face || mate.name) + (State.doneFaces.has(mate.product_id) ? " ✓" : "")).join("  ·  ");
+    $("pack-status").hidden = false;
+  }
+
+  $("next-face").addEventListener("click", () => {
+    $("result").hidden = true;
+    $("capture").hidden = false;
+    updatePackStatus();
+    window.scrollTo(0, 0);
+  });
+  $("again").addEventListener("click", () => {
+    $("result").hidden = true;
+    $("capture").hidden = false;
+    State.packId = null;          // a new physical pack
+    State.doneFaces = new Set();
+    updatePackStatus();
+    window.scrollTo(0, 0);
+  });
+
+  document.addEventListener("languagechange", updatePackStatus);
+  document.addEventListener("loginchange", () => {
+    $("inspector-block").hidden = Boolean(Login.user);   // the login says who you are
+    $("capture").hidden = !mayAct();
+  });
+
+  // The "open on your phone" QR is only rendered once someone actually opens the details -
+  // most visits are already on the phone and will never need it.
+  $("phone-qr").addEventListener("toggle", async () => {
+    if (!$("phone-qr").open || $("phone-qr-img").getAttribute("src")) return;
+    // Not location.origin: if this page was opened as localhost/127.0.0.1, that address
+    // means the phone itself once scanned - useless. Ask the server for one it can reach.
+    const { url } = await (await fetch("/api/server-url")).json();
+    $("phone-qr-img").src = `/api/qr.png?text=${encodeURIComponent(url)}`;
+  });
+
+  /* ---- start ------------------------------------------------------------------- */
+  (async () => {
+    await loadStrings();
+    wireLanguageButtons();
+    wireLogin();
+    $("work-order").value = recall("work_order");
+    $("inspector").value = recall("inspector");
+    $("paired").hidden = !State.sessionId;
+    await refreshLogin();
+    await loadProducts();
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# Computer vision. (opencv-python rather than the -headless build because RapidOCR below
+# asks for opencv-python; installing both would put two copies of cv2 side by side.)
+opencv-python>=4.8
+numpy>=1.26
+
+# Reading dates and lot codes (milestone 2). Installs with pip alone, unlike Tesseract.
+rapidocr_onnxruntime>=1.4
+
+# Web server (the phone page and its API)
+fastapi>=0.110
+uvicorn>=0.27
+python-multipart>=0.0.9      # FastAPI needs it to receive uploaded files
+
+# scripts/render_artwork.py (PDF -> PNG)
+pypdfium2>=4.25
+pillow>=10.0
+
+# Tests
+pytest>=8.0
+httpx>=0.27                  # FastAPI's TestClient uses it to call the API in tests
