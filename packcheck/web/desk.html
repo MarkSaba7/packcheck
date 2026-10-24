@@ -4,72 +4,116 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PackCheck desk</title>
-<link rel="stylesheet" href="/static/packcheck.css">
+<link rel="stylesheet" href="/static/packcheck.css?v=3">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
-<main class="wide">
-  <header>
-    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
-    </svg>
-    <h1 data-t="page.desk_title" data-t-title="page.desk_title">Inspection desk</h1>
-  </header>
-  <div class="topline">
-    <a class="link-button" href="/" data-t="desk.home">Home</a>
-    <a class="link-button" href="/history" target="_blank" rel="noopener" data-t="desk.see_history">History</a>
-    <span id="signed-in" hidden><span data-t="login.signed_in_as">Signed in as</span> <b id="signed-in-name"></b>
-      <button type="button" id="sign-out" data-t="login.sign_out">Sign out</button></span>
-    <button type="button" id="new-session" data-t="desk.new_session">New session</button>
-    <button type="button" data-language="en" aria-pressed="true">EN</button>
-    <button type="button" data-language="fr">FR</button>
+<div id="app-bar" data-active="scan"></div>
+
+<main class="page">
+  <section id="login"></section>
+
+  <div class="page-head with-actions">
+    <div>
+      <h1 data-t="desk.title" data-t-title="desk.title">Scan a pack</h1>
+      <p data-t="desk.subtitle"></p>
+    </div>
+    <div class="head-actions">
+      <a class="button secondary" href="/history" target="_blank" rel="noopener" data-icon="history" data-t="desk.see_history">History</a>
+      <button type="button" class="button secondary" id="new-session" data-t="desk.new_code">New code</button>
+    </div>
   </div>
 
-  <section id="login" hidden>
-    <h2 data-t="login.title">Sign in</h2>
-    <label for="login-name" data-t="login.name">Name</label>
-    <input id="login-name" type="text" autocomplete="username">
-    <label for="login-pin" data-t="login.pin">PIN</label>
-    <input id="login-pin" type="password" inputmode="numeric" autocomplete="current-password">
-    <p id="login-error" class="error-text" hidden></p>
-    <button class="button" id="login-button" type="button" data-t="login.button">Sign in</button>
-  </section>
+  <!-- Where the worker is in one scan. Updated by showState(). -->
+  <ol class="steps" id="steps">
+    <li data-t="desk.step_connect">Connect the phone</li>
+    <li data-t="desk.step_photos">Front and back</li>
+    <li data-t="desk.step_review">Review and report</li>
+  </ol>
 
-  <!-- 1. Pairing. This screen makes up a session and shows its link as a QR code; the phone
+  <!-- The big panel for steps 1 and 2. Its contents follow the state (data-show).
+       Pairing: this screen makes up a session and shows its link as a QR code; the phone
        that opens it tells the server "connected", and from then on sends its photos with
        that session id. This screen asks the server every 2 s what happened (polling: the
        plain alternative to WebSockets, nothing to install, fast enough for a person). -->
-  <section id="pairing">
-    <p data-t="desk.scan_qr">Scan this code with your phone's camera.</p>
-    <img class="qr" id="qr" alt="QR code">
-    <p class="link-text" id="link"></p>
-    <p class="status-line" data-t="desk.waiting_phone">Waiting for the phone to connect…</p>
+  <section class="stage" id="stage">
+    <div class="stage-side">
+      <div class="stage-qr" data-show="pairing">
+        <img class="qr" id="qr" alt="QR code">
+        <p class="link-text" id="link"></p>
+      </div>
+      <div class="stage-emblem" data-show="connected">
+        <span class="emblem-icon" data-icon="phone"></span>
+        <span class="emblem-badge" data-t="desk.connected_title">Phone connected</span>
+      </div>
+      <div class="stage-emblem" data-show="checking">
+        <span class="emblem-icon"><svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+          <circle cx="12" cy="12" r="6.5"/><path d="M12 1.5v21M1.5 12h21"/></svg></span>
+      </div>
+    </div>
+
+    <div class="stage-body" data-show="pairing">
+      <p class="eyebrow" data-t="desk.step_1_of_3">Step 1 of 3</p>
+      <h2 data-t="desk.scan_qr">Scan this code with your phone</h2>
+      <ol class="stage-steps">
+        <li><span class="tile" data-icon="camera"></span><span><b data-t="desk.how_1">Open the camera</b><span data-t="desk.how_1_hint"></span></span></li>
+        <li><span class="tile" data-icon="scan"></span><span><b data-t="desk.how_2">Scan this code</b><span data-t="desk.how_2_hint"></span></span></li>
+        <li><span class="tile" data-icon="check"></span><span><b data-t="desk.how_3">Wait for "connected"</b><span data-t="desk.how_3_hint"></span></span></li>
+      </ol>
+      <div class="waiting"><span class="dot"></span><span data-t="desk.waiting_phone">Waiting for the phone…</span></div>
+    </div>
+
+    <div class="stage-body" data-show="connected">
+      <p class="eyebrow" data-t="desk.step_2_of_3">Step 2 of 3</p>
+      <h2 data-t="desk.connected_heading">Now take the photos on the phone</h2>
+      <ol class="stage-steps">
+        <li><span class="tile" data-icon="camera"></span><span><b data-t="desk.photos_1">Photograph the front</b><span data-t="desk.photos_1_hint"></span></span></li>
+        <li><span class="tile" data-icon="camera"></span><span><b data-t="desk.photos_2">Photograph the back</b><span data-t="desk.photos_2_hint"></span></span></li>
+        <li><span class="tile" data-icon="upload"></span><span><b data-t="desk.photos_3">Press Send</b><span data-t="desk.photos_3_hint"></span></span></li>
+      </ol>
+      <div class="waiting"><span class="dot"></span><span data-t="desk.waiting_photos">Waiting for the photos…</span></div>
+    </div>
+
+    <div class="stage-body" data-show="checking" role="status">
+      <p class="eyebrow" data-t="desk.step_2_of_3">Step 2 of 3</p>
+      <h2 data-t="desk.checking">Checking the photos…</h2>
+      <p class="stage-lead" data-t="desk.checking_hint"></p>
+    </div>
   </section>
 
-  <!-- 2. Connected: waiting for the phone's two photos, then checking them. -->
-  <p class="status-line connected" id="connected" hidden data-t="desk.connected"></p>
-  <div id="checking" hidden role="status">
-    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
-    </svg>
-    <span data-t="desk.checking">Checking the photos…</span>
-  </div>
-
-  <!-- 3. The result of one pack: both faces, every difference to review, and what next. -->
-  <section id="result" hidden>
-    <h2 id="result-name"></h2>
-    <div class="verdict" id="form-verdict"></div>
-    <ul id="form-missing" class="hint"></ul>
-    <div class="actions">
-      <button class="button" id="next-scan" type="button" data-t="desk.next_scan">Scan another pack</button>
-      <a class="button secondary" id="see-report" target="_blank" rel="noopener" data-t="desk.see_report">See the report</a>
-      <a class="button secondary" id="print-report" target="_blank" rel="noopener" data-t="desk.print_report">Print the report</a>
+  <!-- Today's scans, right under the QR code: the history is never more than a glance away. -->
+  <section class="card" id="today">
+    <div class="card-head"><h2 data-t="desk.today">Today's scans</h2><a href="/history" target="_blank" rel="noopener" data-t="home.see_all">See all</a></div>
+    <div class="stats four">
+      <div class="stat"><b id="today-scans">–</b><span data-t="home.stat_scans">Scans</span></div>
+      <div class="stat accepted"><b id="today-accepted">–</b><span data-t="home.stat_accepted">Accepted</span></div>
+      <div class="stat refused"><b id="today-refused">–</b><span data-t="home.stat_refused">Refused</span></div>
+      <div class="stat pending"><b id="today-pending">–</b><span data-t="home.stat_pending">To review</span></div>
     </div>
-    <p class="hint" id="review-hint" data-t="desk.review_hint"></p>
+    <ul class="scan-list" id="today-list"></ul>
+  </section>
+
+  <!-- 3. The result of one pack: the verdict and what to do next on top, then each face. -->
+  <section id="result" hidden>
+    <div class="card">
+      <div class="result-head">
+        <div><h2 id="result-name"></h2><p class="muted" id="result-meta"></p></div>
+        <span class="pill" id="form-pill"></span>
+      </div>
+      <div class="verdict" id="form-verdict"></div>
+      <ul class="missing" id="form-missing"></ul>
+      <div class="actions">
+        <button class="button large" id="next-scan" type="button" data-icon="scan" data-t="desk.next_scan">Scan another pack</button>
+        <a class="button large secondary" id="see-report" target="_blank" rel="noopener" data-icon="report" data-t="desk.see_report">See the report</a>
+        <a class="button large secondary" id="print-report" target="_blank" rel="noopener" data-icon="print" data-t="desk.print_report">Print the report</a>
+      </div>
+    </div>
+    <p class="callout" id="review-hint" data-t="desk.review_hint"></p>
     <div id="faces"></div>
   </section>
 </main>
 
-<script src="/static/common.js"></script>
+<script src="/static/common.js?v=3"></script>
 <script>
   const Desk = { sessionId: null, lastId: 0, timer: null, connected: false, packs: {}, shownPack: null, checklist: [] };
 
@@ -89,7 +133,7 @@
 
   async function poll() {
     const session = await (await fetch(`/api/sessions/${Desk.sessionId}`)).json();
-    if (session.connected && !Desk.connected) { Desk.connected = true; if (!Desk.shownPack) showState("connected"); }
+    if (session.connected) Desk.connected = true;
     if (Desk.connected && !Desk.shownPack) showState(session.checking ? "checking" : "connected");
 
     const response = await fetch(`/api/inspections?session=${Desk.sessionId}&after_id=${Desk.lastId}`);
@@ -103,10 +147,17 @@
   }
 
   function showState(state) {
-    $("pairing").hidden = state !== "pairing";
-    $("connected").hidden = state !== "connected";
-    $("checking").hidden = state !== "checking";
+    // The big panel (and today's scans) for steps 1-2; the result replaces them for step 3.
+    $("stage").hidden = state === "result";
+    $("today").hidden = state === "result";
     $("result").hidden = state !== "result";
+    for (const element of $("stage").querySelectorAll("[data-show]")) element.hidden = element.dataset.show !== state;
+    $("stage").dataset.state = state;
+    const step = { pairing: 0, connected: 1, checking: 1, result: 2 }[state];
+    [...$("steps").children].forEach((li, index) => {
+      li.classList.toggle("done", index < step);
+      li.classList.toggle("active", index === step);
+    });
   }
 
   async function showPack(packId) {
@@ -126,9 +177,13 @@
   /* The pack's R79 verdict, asked again after every decision: it changes as differences are reviewed. */
   async function refreshVerdict() {
     const pack = await (await fetch(`/api/packs/${Desk.shownPack}`)).json();
-    $("result-name").textContent = `${pack.product_name} · ${pack.product_code}`;
+    $("result-name").textContent = pack.product_name;
+    $("result-meta").textContent = [pack.product_code, (pack.created_at || "").replace("T", " ").slice(0, 16), pack.inspector].filter(Boolean).join(" · ");
+    $("form-pill").className = "pill " + pack.verdict;
+    $("form-pill").textContent = t("r79.verdict." + pack.verdict);
     $("form-verdict").className = "verdict " + pack.verdict;
-    $("form-verdict").textContent = `${t("desk.form")}: ${t("r79.verdict." + pack.verdict)}`;
+    $("form-verdict").innerHTML = icon(pack.verdict === "accepted" ? "check" : "report") + `<span></span>`;
+    $("form-verdict").querySelector("span").textContent = t("desk.verdict." + pack.verdict);
     $("form-missing").innerHTML = "";
     for (const [key, values] of pack.missing) {
       const li = document.createElement("li");
@@ -138,27 +193,35 @@
   }
 
   function faceBlock(inspection, face) {
-    const div = document.createElement("div");
-    div.className = "face-result";
+    const div = document.createElement("section");
+    div.className = "card face-card";
     const count = inspection.differences.length;
     const verdict = {
       ok: t("verdict.ok"),
       differences_found: count === 1 ? t("verdict.one_difference") : t("verdict.differences", { count }),
       alignment_failed: t("verdict.alignment_failed"),
     }[inspection.status];
-    div.innerHTML = `<h3></h3><div class="verdict ${inspection.status}"></div><p class="explanation"></p>
+    div.innerHTML = `<h3><span class="face-name"></span><span class="face-tags"><span class="review-count"></span><span class="pill ${inspection.status}"></span></span></h3>
+      <p class="explanation"></p><div class="warnings"></div>
       <a class="comparison" target="_blank" rel="noopener"><img alt=""></a><ol class="differences"></ol>`;
-    const heading = t("r79.face_heading", { face: t("r79.face." + face), name: inspection.product_name });
-    div.querySelector("h3").textContent = heading.charAt(0).toUpperCase() + heading.slice(1);
-    div.querySelector(".verdict").textContent = verdict;
-    div.querySelector(".explanation").textContent = inspection.status === "alignment_failed" ? inspection.message : "";
+    div.querySelector(".face-name").textContent = t("desk.face." + face);
+    div.querySelector(".pill").textContent = verdict;
+    const explanation = div.querySelector(".explanation");
+    explanation.textContent = inspection.status === "alignment_failed" ? inspection.message : "";
+    explanation.hidden = !explanation.textContent;
     if (inspection.status === "alignment_failed") div.querySelector(".comparison").remove();
     else {
       const url = `/runs/${inspection.run}/comparison.jpg`;
       div.querySelector(".comparison").href = url;
       div.querySelector(".comparison img").src = url;
+      div.querySelector(".comparison img").alt = t("comparison.alt");
     }
     for (const difference of inspection.differences) div.querySelector(".differences").append(differenceItem(inspection, difference));
+    div.updateCount = () => {
+      const decided = inspection.differences.filter((difference) => difference.decision).length;
+      div.querySelector(".review-count").textContent = count ? t("desk.reviewed", { done: decided, count }) : "";
+    };
+    div.updateCount();
     return div;
   }
 
@@ -166,15 +229,23 @@
   function differenceItem(inspection, difference) {
     const li = document.createElement("li");
     li.innerHTML = `<span class="number">${difference.number}</span>
-      <span><span class="kind"></span><span class="detail"></span>
-      <img class="closeup" alt="">
-      <input type="text" class="note">
-      <label>${t("desk.point")}</label><select class="point"></select>
-      <div class="decision-buttons"></div><span class="decision" hidden></span></span>`;
+      <div class="diff-body">
+        <div class="diff-picture"><span class="kind"></span><span class="detail"></span>
+          <img class="closeup" alt=""><span class="closeup-caption"></span></div>
+        <div class="diff-controls">
+          <label data-field="note"></label><input type="text" class="note">
+          <label data-field="point"></label><select class="point"></select>
+          <div class="decision-buttons"></div><span class="decision" hidden></span>
+        </div>
+      </div>`;
+    li.querySelector(".closeup-caption").textContent = t("desk.closeup_caption");
     li.querySelector(".kind").textContent = t(difference.kind === "content" ? "differences.content" : "differences.colour");
     li.querySelector(".detail").textContent = t(difference.kind === "content" ? "differences.content_detail" : "differences.colour_detail");
     li.querySelector(".closeup").src = `/runs/${inspection.run}/${difference.closeup}`;
+    li.querySelector(".closeup").alt = t("differences.closeup_alt");
+    li.querySelector("[data-field=note]").textContent = t("report.note");
     li.querySelector(".note").placeholder = t("differences.note");
+    li.querySelector("[data-field=point]").textContent = t("desk.point");
     const select = li.querySelector(".point");
     select.append(new Option(t("desk.point_none"), ""));
     for (const key of Desk.checklist) select.append(new Option(t("r79.item." + key), key));
@@ -186,6 +257,12 @@
       button.addEventListener("click", () => decide(li, difference, decision));
       li.querySelector(".decision-buttons").append(button);
     }
+    // Already decided (the language changed and the result was drawn again): show it.
+    if (difference.decision) {
+      li.querySelector(".note").value = difference.decision.note || "";
+      select.value = difference.decision.checklist_item || "";
+      markDecided(li, difference.decision.decision);
+    }
     return li;
   }
 
@@ -196,27 +273,49 @@
       body: JSON.stringify({ decision, note: li.querySelector(".note").value, checklist_item: li.querySelector(".point").value || null }),
     });
     if (!response.ok) { alert(t("error.generic")); return; }
+    difference.decision = await response.json();
+    markDecided(li, decision);
+    li.closest(".face-card").updateCount();
+    await refreshVerdict();
+  }
+
+  function markDecided(li, decision) {
+    li.classList.toggle("decided-confirm", decision === "confirm");
+    li.classList.toggle("decided-dismiss", decision === "dismiss");
     for (const button of li.querySelectorAll(".decision-buttons button")) {
       button.setAttribute("aria-pressed", String(button.classList.contains(decision)));
     }
     const label = li.querySelector(".decision");
     label.className = "decision " + (decision === "confirm" ? "confirmed" : "dismissed");
-    label.textContent = t(decision === "confirm" ? "differences.confirmed" : "differences.dismissed");
+    label.textContent = "✓ " + t(decision === "confirm" ? "differences.confirmed" : "differences.dismissed");
     label.hidden = false;
-    await refreshVerdict();
   }
 
-  $("next-scan").addEventListener("click", () => { Desk.shownPack = null; showState("connected"); });
+  /* Today's scans under the panel: counts, and the latest few with a link to their report. */
+  async function loadToday() {
+    const packs = await (await fetch("/api/packs?range=day")).json();
+    const count = (verdict) => packs.filter((pack) => pack.verdict === verdict).length;
+    $("today-scans").textContent = packs.length;
+    $("today-accepted").textContent = count("accepted");
+    $("today-refused").textContent = count("refused");
+    $("today-pending").textContent = count("pending");
+    $("today-list").innerHTML = "";
+    for (const pack of packs.slice(0, 4)) $("today-list").append(scanRow(pack));
+  }
+
+  $("next-scan").addEventListener("click", () => { Desk.shownPack = null; showState("connected"); loadToday(); });
   $("new-session").addEventListener("click", startSession);
-  document.addEventListener("languagechange", () => { if (Desk.shownPack) showPack(Desk.shownPack); });
+  document.addEventListener("languagechange", () => { loadToday(); if (Desk.shownPack) showPack(Desk.shownPack); });
 
   (async () => {
+    mountAppBar();
     await loadStrings();
     wireLanguageButtons();
     wireLogin();
     await refreshLogin();
     Desk.checklist = await (await fetch("/api/checklist")).json();
     await startSession();
+    loadToday();
   })();
 </script>
 </body>

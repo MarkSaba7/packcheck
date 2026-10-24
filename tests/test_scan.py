@@ -33,6 +33,10 @@ def test_the_pages_are_served(client):
         assert client.get(page).status_code == 200, page
     home = client.get("/").text
     assert 'href="/desk"' in home and 'href="/artworks/new"' in home   # the two buttons
+    # Browsers must check for a newer page, stylesheet or script instead of mixing an old one
+    # with a new page (the redesign once showed up unstyled because of exactly that).
+    for path in ("/", "/static/packcheck.css", "/static/common.js", "/static/strings.json"):
+        assert client.get(path).headers["cache-control"] == "no-cache", path
 
 
 def test_both_photos_identify_the_pack(products_dir):

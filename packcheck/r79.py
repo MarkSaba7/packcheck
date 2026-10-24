@@ -185,6 +185,7 @@ def render_form(form, language="fr", runs_url="/runs", print_on_load=False):
         f'<html lang="{escape(language)}"><head><meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
         f"<title>R79 {escape(form['product_code'])} {escape(form['date'])}</title>",
+        '<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">',
         f"<style>{REPORT_STYLE}{STYLE}</style></head><body><main>",
         "<nav class='no-print'>"
         f"<button onclick='window.print()'>{t('r79.print')}</button>"
@@ -249,9 +250,11 @@ def _annex(form, t, say, runs_url):
 
 
 STYLE = """
-  nav { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 1rem; }
-  nav button { padding: 0.6rem 1rem; font: inherit; font-weight: 700; color: #fff; background: var(--ink); border: 0; cursor: pointer; }
-  nav a { color: var(--ink); }
+  nav { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: -1.5rem -1.25rem 1.5rem; padding: 0.75rem 1.25rem; background: #0E2132; }
+  nav button, nav a { padding: 0.55rem 1rem; font: inherit; font-weight: 650; border-radius: 6px; text-decoration: none; cursor: pointer; }
+  nav button { color: #fff; background: #0A6F9F; border: 1px solid #0A6F9F; }
+  nav a { color: #DCE6EE; border: 1px solid #2E4A61; }
+  nav a:hover { color: #fff; border-color: #DCE6EE; }
   .form-title { text-align: center; font-size: 1.35rem; margin: 0.5rem 0 1rem; }
   table.head th, table.head td { border: 1px solid var(--ink); text-align: center; }
   table.head td { height: 2.2rem; font-weight: 600; }

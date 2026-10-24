@@ -4,79 +4,112 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PackCheck artwork</title>
-<link rel="stylesheet" href="/static/packcheck.css">
+<link rel="stylesheet" href="/static/packcheck.css?v=3">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
-<main class="wide">
-  <header>
-    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
-    </svg>
+<div id="app-bar" data-active="artwork"></div>
+
+<main class="page">
+  <section id="login"></section>
+
+  <div class="page-head">
     <h1 data-t="page.artwork_title" data-t-title="page.artwork_title">Add an artwork</h1>
-  </header>
-  <div class="topline">
-    <a class="link-button" href="/" data-t="desk.home">Home</a>
-    <span id="signed-in" hidden><span data-t="login.signed_in_as">Signed in as</span> <b id="signed-in-name"></b>
-      <button type="button" id="sign-out" data-t="login.sign_out">Sign out</button></span>
-    <button type="button" data-language="en" aria-pressed="true">EN</button>
-    <button type="button" data-language="fr">FR</button>
+    <p data-t="proofs.intro"></p>
   </div>
 
-  <section id="login" hidden>
-    <h2 data-t="login.title">Sign in</h2>
-    <label for="login-name" data-t="login.name">Name</label>
-    <input id="login-name" type="text" autocomplete="username">
-    <label for="login-pin" data-t="login.pin">PIN</label>
-    <input id="login-pin" type="password" inputmode="numeric" autocomplete="current-password">
-    <p id="login-error" class="error-text" hidden></p>
-    <button class="button" id="login-button" type="button" data-t="login.button">Sign in</button>
+  <ol class="steps" id="steps">
+    <li data-t="proofs.step_upload">Upload the proof</li>
+    <li data-t="proofs.step_front">Draw the front</li>
+    <li data-t="proofs.step_back">Draw the back</li>
+    <li data-t="proofs.step_details">Name and save</li>
+  </ol>
+
+  <!-- Step 1: the document. Dropping a file on the box works too. -->
+  <section id="upload">
+    <input id="proof-file" type="file" accept=".pdf,image/png,image/jpeg">
+    <label for="proof-file" class="dropzone" id="dropzone">
+      <span data-icon="upload"></span>
+      <b data-t="proofs.drop">Drop the proof here, or click to choose it</b>
+      <span data-t="proofs.drop_hint">PDF, or a PNG / JPEG scan</span>
+    </label>
+    <p id="upload-message" hidden></p>
   </section>
 
-  <p data-t="proofs.intro"></p>
-  <input id="proof-file" type="file" accept=".pdf,image/png,image/jpeg">
-  <label for="proof-file" class="button" data-t="proofs.upload">Choose the document (PDF or scan)</label>
-  <p id="upload-message" hidden></p>
-
+  <!-- Steps 2-4. The person draws the FRONT first, then the BACK: a scan always needs both,
+       so the artwork is not saved until both are drawn. Each box is kept as FRACTIONS of the
+       sheet, like the zone editor. Zoom makes the canvas wider than the page so the trim
+       line can be hit exactly; the box around it scrolls. -->
   <section id="drawing" hidden>
-    <!-- The person draws the FRONT first, then the BACK: a scan always needs both, so the
-         artwork is not saved until both are drawn. Each box is kept as FRACTIONS of the
-         sheet, like the zone editor. Zoom makes the canvas wider than the page so the trim
-         line can be hit exactly; the box around it scrolls. -->
-    <p class="status-line" id="draw-step"></p>
-    <label for="zoom" data-t="proofs.zoom">Zoom</label>
-    <select id="zoom"><option value="1">100%</option><option value="2">200%</option><option value="3">300%</option></select>
-    <div class="editor scroll"><canvas id="canvas"></canvas></div>
-    <div class="actions"><button class="button small secondary" id="redraw" type="button" data-t="proofs.redraw">Draw again</button></div>
+    <div class="card">
+      <p class="callout" id="draw-step"></p>
+      <div class="editor-bar">
+        <label for="zoom" data-t="proofs.zoom">Zoom</label>
+        <select id="zoom"><option value="1">100%</option><option value="2">200%</option><option value="3">300%</option></select>
+        <button class="button small secondary" id="redraw" type="button" data-t="proofs.redraw">Draw again</button>
+        <button class="button small secondary" id="other-file" type="button" data-t="proofs.other_file">Another document</button>
+      </div>
+      <div class="editor scroll"><canvas id="canvas"></canvas></div>
+    </div>
 
-    <label for="name" data-t="proofs.name">Artwork name</label>
-    <input id="name" type="text">
-    <label for="pack" data-t="proofs.pack">Product code</label>
-    <input id="pack" type="text">
-    <label for="label-code" data-t="proofs.label_code">Label code (optional)</label>
-    <input id="label-code" type="text">
-    <label for="barcode" data-t="proofs.barcode">Barcode (optional)</label>
-    <input id="barcode" type="text" inputmode="numeric">
-    <input id="barcode-photo" type="file" accept="image/*" capture="environment">
-    <label for="barcode-photo" class="button secondary" data-t="proofs.scan_barcode">Scan the barcode with a photo</label>
-    <p id="barcode-message" hidden></p>
+    <div class="card" id="details">
+      <div class="card-head"><h2 data-t="proofs.details">Details</h2></div>
+      <div class="form-grid">
+        <div class="full"><label for="name" data-t="proofs.name">Artwork name</label><input id="name" type="text"></div>
+        <div><label for="pack" data-t="proofs.pack">Product code</label><input id="pack" type="text"></div>
+        <div><label for="label-code"><span data-t="proofs.label_code">Label code</span> <span class="optional" data-t="proofs.optional"></span></label><input id="label-code" type="text"></div>
+        <div class="full">
+          <label for="barcode"><span data-t="proofs.barcode">Barcode</span> <span class="optional" data-t="proofs.optional"></span></label>
+          <div class="input-with-button">
+            <input id="barcode" type="text" inputmode="numeric">
+            <input id="barcode-photo" type="file" accept="image/*" capture="environment">
+            <label for="barcode-photo" class="button secondary" data-icon="camera" data-t="proofs.scan_barcode">Scan it</label>
+          </div>
+          <p id="barcode-message" hidden></p>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="button large" id="create" type="button" disabled data-icon="check" data-t="proofs.create">Add to the database</button>
+      </div>
+      <p id="message" hidden></p>
+      <div class="actions" id="anyway-row" hidden>
+        <button class="button secondary" id="create-anyway" type="button" data-t="proofs.create_anyway">It is a different artwork: add it anyway</button>
+      </div>
+    </div>
+  </section>
 
-    <button class="button" id="create" type="button" disabled data-t="proofs.create">Add to the database</button>
-    <p id="message" hidden></p>
-    <button class="button secondary" id="create-anyway" type="button" hidden data-t="proofs.create_anyway">It is a different artwork: add it anyway</button>
-    <ul id="created"></ul>
+  <!-- Done: where to go next. -->
+  <section class="card done-screen" id="done" hidden>
+    <span class="status-icon" data-icon="check"></span>
+    <h2 data-t="proofs.done_title">Artwork added</h2>
+    <p data-t="proofs.created"></p>
+    <ul class="created-list" id="created"></ul>
+    <div class="actions">
+      <a class="button secondary" href="/artworks/new" data-icon="add" data-t="proofs.add_another">Add another artwork</a>
+      <a class="button" href="/desk" data-icon="scan" data-t="home.scan">Start scanning</a>
+    </div>
   </section>
 </main>
 
-<script src="/static/common.js"></script>
+<script src="/static/common.js?v=3"></script>
 <script>
   const Artwork = { id: null, faces: {}, image: new Image(), drag: null };
   const FACES = ["front", "back"];
   const canvas = $("canvas");
   const context = canvas.getContext("2d");
 
-  $("proof-file").addEventListener("change", async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
+  /* ---- step 1: the document ---- */
+  $("proof-file").addEventListener("change", (event) => { if (event.target.files[0]) upload(event.target.files[0]); event.target.value = ""; });
+  const dropzone = $("dropzone");
+  dropzone.addEventListener("dragover", (event) => { event.preventDefault(); dropzone.classList.add("over"); });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("over"));
+  dropzone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    dropzone.classList.remove("over");
+    if (event.dataTransfer.files[0]) upload(event.dataTransfer.files[0]);
+  });
+
+  async function upload(file) {
     if (!mayAct()) { say($("upload-message"), t("error.not_signed_in"), true); return; }
     say($("upload-message"), t("proofs.reading"), false);
     const form = new FormData();
@@ -88,19 +121,27 @@
     Artwork.faces = {};
     Artwork.image.onload = () => {
       canvas.width = Artwork.image.width; canvas.height = Artwork.image.height;
-      $("drawing").hidden = false; $("upload-message").hidden = true; $("created").innerHTML = "";
+      $("upload").hidden = true; $("upload-message").hidden = true; $("drawing").hidden = false;
       update(); draw();
     };
     Artwork.image.src = `/api/proofs/${Artwork.id}/sheet.png`;
-  });
+  }
 
-  /* Which face is drawn next: the front, then the back, then none. */
+  $("other-file").addEventListener("click", () => { $("drawing").hidden = true; $("upload").hidden = false; Artwork.id = null; update(); });
+
+  /* ---- steps 2-3: draw the faces ---- */
   function nextFace() { return FACES.find((face) => !Artwork.faces[face]); }
 
   function update() {
     const face = nextFace();
-    $("draw-step").textContent = face ? t("proofs.draw_face", { face: t("r79.face." + face) }) : t("proofs.both_drawn");
-    $("draw-step").className = "status-line" + (face ? "" : " connected");
+    const step = !Artwork.id ? 0 : face === "front" ? 1 : face === "back" ? 2 : 3;
+    [...$("steps").children].forEach((li, index) => {
+      li.classList.toggle("done", index < step);
+      li.classList.toggle("active", index === step);
+    });
+    $("draw-step").className = "callout" + (face ? "" : " done");
+    $("draw-step").innerHTML = icon(face ? "artwork" : "check") + "<span></span>";
+    $("draw-step").querySelector("span").textContent = face ? t("proofs.draw_face", { face: t("r79.face." + face) }) : t("proofs.both_drawn");
     $("create").disabled = Boolean(face) || !$("pack").value.trim();
   }
 
@@ -109,19 +150,23 @@
   $("pack").addEventListener("input", update);
 
   function draw() {
+    if (!Artwork.image.width) return;
     context.drawImage(Artwork.image, 0, 0);
     const scale = canvas.width / canvas.getBoundingClientRect().width;
-    context.lineWidth = 2 * scale;
-    context.font = `bold ${22 * scale}px system-ui, sans-serif`;
-    context.strokeStyle = context.fillStyle = "#0089B6";
+    context.lineWidth = 3 * scale;
+    context.font = `bold ${22 * scale}px "Segoe UI", system-ui, sans-serif`;
     for (const [face, rect] of Object.entries(Artwork.faces)) {
       const [x, y, w, h] = toPixels(rect);
+      context.fillStyle = "rgba(10, 111, 159, 0.10)";
+      context.fillRect(x, y, w, h);
+      context.strokeStyle = context.fillStyle = "#0A6F9F";
       context.strokeRect(x, y, w, h);
-      context.fillText(t("r79.face." + face).toUpperCase(), x + 4 * scale, y - 8 * scale);
+      context.fillText(t("desk.face." + face).toUpperCase(), x + 6 * scale, y - 10 * scale);
     }
     if (Artwork.drag) {
       const [x, y, w, h] = normalise(Artwork.drag);
-      context.setLineDash([8 * scale, 6 * scale]);
+      context.strokeStyle = "#0A6F9F";
+      context.setLineDash([10 * scale, 6 * scale]);
       context.strokeRect(x, y, w, h);
       context.setLineDash([]);
     }
@@ -154,9 +199,10 @@
     Artwork.drag = null;
     if (rect[2] >= 20 && rect[3] >= 20) Artwork.faces[nextFace()] = toFractions(rect);   // a tap is not a face
     update(); draw();
+    if (!nextFace()) $("details").scrollIntoView({ behavior: "smooth" });
   });
 
-  /* The barcode: read from a photo by the server, then checked against the database. */
+  /* ---- step 4: details. The barcode is read from a photo by the server, then checked against the database. ---- */
   $("barcode-photo").addEventListener("change", async (event) => {
     const file = event.target.files[0];
     event.target.value = "";
@@ -175,7 +221,8 @@
 
   async function create(allowSimilar) {
     if (!mayAct()) { say($("message"), t("error.not_signed_in"), true); return; }
-    $("create-anyway").hidden = true;
+    $("anyway-row").hidden = true;
+    $("create").disabled = true;
     say($("message"), t("proofs.checking"), false);
     const faces = FACES.map((face) => ({ face, rect: Artwork.faces[face] }));
     const response = await fetch(`/api/proofs/${Artwork.id}/products`, {
@@ -184,23 +231,28 @@
                              barcode: $("barcode").value, faces, allow_similar: allowSimilar }),
     });
     const body = await response.json();
+    update();
     if (response.status === 409) {
       // Already in the database. Only "it LOOKS the same" can be overruled by a person.
       say($("message"), body.detail.message, true);
-      $("create-anyway").hidden = !body.detail.can_override;
+      $("anyway-row").hidden = !body.detail.can_override;
       return;
     }
     if (!response.ok) { say($("message"), body.detail || t("error.generic"), true); return; }
-    say($("message"), t("proofs.created"), false);
     $("created").innerHTML = "";
     for (const productId of body.product_ids) {
       const item = document.createElement("li");
       const link = document.createElement("a");
       link.href = `/products/${encodeURIComponent(productId)}/zones`;
-      link.textContent = `${productId}: ${t("proofs.open_zones")}`;
+      link.innerHTML = `<span></span>${icon("arrow")}`;
+      link.querySelector("span").textContent = `${productId} · ${t("proofs.open_zones")}`;
       item.append(link);
       $("created").append(item);
     }
+    $("drawing").hidden = true;
+    $("done").hidden = false;
+    [...$("steps").children].forEach((li) => { li.classList.add("done"); li.classList.remove("active"); });
+    window.scrollTo(0, 0);
   }
 
   function say(box, text, isError) {
@@ -210,13 +262,15 @@
   }
 
   window.addEventListener("resize", draw);
-  document.addEventListener("languagechange", () => { if (Artwork.id) { update(); draw(); } });
+  document.addEventListener("languagechange", () => { update(); draw(); });
 
   (async () => {
+    mountAppBar();
     await loadStrings();
     wireLanguageButtons();
     wireLogin();
     await refreshLogin();
+    update();
   })();
 </script>
 </body>

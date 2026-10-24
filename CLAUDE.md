@@ -95,6 +95,9 @@ zone editor (web/zones.html) --zones-->     |
   database, report). Add fields; do not rename existing ones casually. Two verdicts:
   `status` (fixed print) and `readings_status` (variable print).
 - All page and report text is in `packcheck/web/strings.json` (en, fr).
+- Every page starts with `<div id="app-bar" data-active="...">` and calls `mountAppBar()`
+  (common.js): one shared top bar, sign-in box and icon set (`data-icon="name"`). The look
+  lives in `web/packcheck.css` (light theme, design tokens at the top); no inline styles.
 
 ## Decisions already made (and why)
 

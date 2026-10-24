@@ -99,6 +99,23 @@ LOGIN_COOKIE = "packcheck_login"
 RUNS_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="PackCheck")
+
+
+@app.middleware("http")
+async def always_revalidate(request: Request, call_next):
+    """Make browsers ask "has this changed?" before reusing a page, stylesheet or script.
+    (The pages also link packcheck.css and common.js with "?v=2" - see common.js.)
+
+    Why: without this header a browser may keep using its cached copy for days without
+    asking. After an update that means the NEW page with the OLD stylesheet - a broken mix
+    (it happened: the redesign showed up unstyled). "no-cache" does not mean "never cache":
+    the browser keeps its copy and the server answers "304 not modified" in a few bytes when
+    nothing changed. Inspection images in /runs/ never change once written, so they keep the
+    default."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/runs/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 app.mount("/runs", StaticFiles(directory=RUNS_DIR), name="runs")
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 

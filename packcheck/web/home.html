@@ -4,43 +4,86 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PackCheck</title>
-<link rel="stylesheet" href="/static/packcheck.css">
+<link rel="stylesheet" href="/static/packcheck.css?v=3">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
-<main>
-  <header>
-    <!-- A printer's registration mark: the target used to check that inks line up. -->
-    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
-    </svg>
-    <h1 data-t="app.title" data-t-title="app.title">PackCheck</h1>
-  </header>
-  <div class="topline">
-    <a class="link-button" href="/history" data-t="home.history">Scan history</a>
-    <button type="button" data-language="en" aria-pressed="true">EN</button>
-    <button type="button" data-language="fr">FR</button>
+<div id="app-bar" data-active="home"></div>
+
+<main class="page">
+  <div class="page-head">
+    <p class="eyebrow" data-t="home.eyebrow">Goods-in packaging control</p>
+    <h1 data-t="home.title" data-t-title="app.title">What do you want to do?</h1>
   </div>
 
   <!-- The two things anyone comes here to do. Everything else is reached from them. -->
-  <nav class="home">
-    <a class="home-choice" href="/desk">
-      <span class="home-number">1</span>
-      <b data-t="home.scan">Start scanning</b>
-      <span data-t="home.scan_hint"></span>
+  <div class="choices">
+    <a class="choice primary" href="/desk">
+      <span class="choice-number">1</span>
+      <span class="choice-icon" data-icon="scan"></span>
+      <h2 data-t="home.scan">Start scanning</h2>
+      <p data-t="home.scan_hint"></p>
+      <span class="choice-go"><span data-t="home.scan_go">Start</span><span data-icon="arrow"></span></span>
     </a>
-    <a class="home-choice" href="/artworks/new">
-      <span class="home-number">2</span>
-      <b data-t="home.add">Add an artwork</b>
-      <span data-t="home.add_hint"></span>
+    <a class="choice" href="/artworks/new">
+      <span class="choice-number">2</span>
+      <span class="choice-icon" data-icon="add"></span>
+      <h2 data-t="home.add">Add an artwork</h2>
+      <p data-t="home.add_hint"></p>
+      <span class="choice-go"><span data-t="home.add_go">Add</span><span data-icon="arrow"></span></span>
     </a>
-  </nav>
+  </div>
+
+  <section class="card">
+    <div class="card-head"><h2 data-t="home.today">Today</h2></div>
+    <div class="stats">
+      <div class="stat"><b id="stat-scans">–</b><span data-t="home.stat_scans">Scans</span></div>
+      <div class="stat accepted"><b id="stat-accepted">–</b><span data-t="home.stat_accepted">Accepted</span></div>
+      <div class="stat refused"><b id="stat-refused">–</b><span data-t="home.stat_refused">Refused</span></div>
+      <div class="stat pending"><b id="stat-pending">–</b><span data-t="home.stat_pending">To review</span></div>
+      <div class="stat"><b id="stat-artworks">–</b><span data-t="home.stat_artworks">Artworks</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head"><h2 data-t="home.recent">Recent scans</h2><a href="/history?range=week" data-t="home.see_all">See all</a></div>
+    <ul class="scan-list" id="recent"></ul>
+    <div class="empty" id="no-recent" hidden><span data-icon="inbox"></span><span data-t="home.no_recent"></span></div>
+  </section>
 </main>
 
-<script src="/static/common.js"></script>
+<script src="/static/common.js?v=3"></script>
 <script>
+  const Home = { today: [], week: [], artworks: 0 };
+
+  function render() {
+    const count = (verdict) => Home.today.filter((pack) => pack.verdict === verdict).length;
+    $("stat-scans").textContent = Home.today.length;
+    $("stat-accepted").textContent = count("accepted");
+    $("stat-refused").textContent = count("refused");
+    $("stat-pending").textContent = count("pending");
+    $("stat-artworks").textContent = Home.artworks;
+
+    $("recent").innerHTML = "";
+    $("no-recent").hidden = Home.week.length > 0;
+    for (const pack of Home.week.slice(0, 6)) $("recent").append(scanRow(pack));
+  }
+
+  document.addEventListener("languagechange", render);
+
   (async () => {
+    mountAppBar();
     await loadStrings();
     wireLanguageButtons();
+    const [today, week, products] = await Promise.all([
+      fetch("/api/packs?range=day").then((response) => response.json()),
+      fetch("/api/packs?range=week").then((response) => response.json()),
+      fetch("/api/products").then((response) => response.json()),
+    ]);
+    Home.today = today;
+    Home.week = week;
+    Home.artworks = new Set(products.map((product) => product.pack || product.product_id)).size;   // one artwork = one pack (front + back)
+    render();
   })();
 </script>
 </body>
