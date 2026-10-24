@@ -99,6 +99,7 @@ textarea { min-height: 5rem; font-family: ui-monospace, Consolas, monospace; fon
   color: var(--on-bright); background: var(--cyan);
   border: 1px solid var(--cyan); border-radius: 3px;
 }
+.button:disabled { opacity: 0.35; cursor: not-allowed; }
 .button.secondary { color: var(--text); background: transparent; border-color: var(--edge); }
 .button.secondary:hover { border-color: var(--dim); }
 .button.small { display: inline-block; width: auto; margin: 0.5rem 0.5rem 0 0; padding: 0.5625rem 1rem; font-size: 0.9375rem; }
@@ -227,11 +228,57 @@ details[open] > summary::before { content: "▾ "; }
 /* Zone editor. The artwork itself is a light image, so the canvas keeps a white bed. */
 .editor { position: relative; margin-top: 1rem; touch-action: none; }
 .editor canvas { display: block; width: 100%; height: auto; border: 1px solid var(--edge); background: #fff; cursor: crosshair; }
+/* Proof page: a whole proof sheet is wide, so it can be zoomed and scrolled inside this box. */
+.editor.scroll { overflow: auto; max-height: 80vh; }
 .zone-row { background: var(--panel); border: 1px solid var(--edge); border-radius: 3px; padding: 0.875rem 1rem; margin-top: 0.75rem; }
 .zone-row.selected { border-color: var(--cyan); box-shadow: 0 0 0 1px var(--cyan); }
 .zone-row .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; }
 .zone-row label { margin: 0.25rem 0 0.25rem; }
 .zone-row .rect { grid-column: 1 / -1; font-family: ui-monospace, Consolas, monospace; font-size: 0.8125rem; color: var(--dim); }
 .zone-row .expect { grid-column: 1 / -1; }
+
+/* Home: two big choices, the whole width, impossible to miss. */
+.home { display: grid; gap: 1rem; margin-top: 2rem; }
+.home-choice {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; align-items: center;
+  padding: 1.5rem 1.25rem; text-decoration: none; color: var(--text);
+  background: var(--panel); border: 1px solid var(--edge); border-left: 5px solid var(--cyan); border-radius: 3px;
+}
+.home-choice:hover, .home-choice:focus-visible { border-color: var(--cyan); outline: none; }
+.home-choice b { font-size: 1.375rem; }
+.home-choice > span:last-child { grid-column: 2; color: var(--dim); font-size: 0.9375rem; }
+.home-number {
+  grid-row: span 2; width: 2.5rem; height: 2.5rem; display: grid; place-items: center;
+  background: var(--cyan); color: var(--on-bright); font-weight: 800; font-size: 1.25rem; border-radius: 2px;
+}
+
+/* Phone: one slot per face, with the photo shown once taken. */
+.slots { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 1rem; }
+.slot { background: var(--panel); border: 1px solid var(--edge); border-radius: 3px; padding: 0.75rem; text-align: center; }
+.slot img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; background: var(--sunk); border: 1px solid var(--edge); }
+.slot .button { margin-top: 0.5rem; padding: 0.75rem 0.5rem; font-size: 0.9375rem; }
+.slot.done { border-color: var(--pass); }
+
+/* Desk: the connection status line, and the buttons under a result. */
+.status-line { margin: 0.75rem 0 0; padding: 0.75rem 1rem; background: var(--panel); border: 1px solid var(--edge); border-radius: 3px; font-weight: 600; }
+.status-line.connected { border-left: 5px solid var(--pass); }
+.status-line.checking { border-left: 5px solid var(--cyan); }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem; }
+.actions .button { flex: 1 1 12rem; margin: 0; text-decoration: none; }
+.verdict.accepted { color: var(--pass); border-left-color: var(--pass); background: rgba(63, 208, 127, 0.10); }
+.verdict.refused { color: var(--magenta); border-left-color: var(--magenta); background: rgba(255, 61, 139, 0.10); }
+.verdict.pending { color: var(--amber); border-left-color: var(--amber); background: rgba(255, 197, 61, 0.10); }
+.face-result { margin-top: 1.5rem; }
+.face-result h3 { margin: 0 0 0.25rem; }
+
+/* History: one row per scanned pack. */
+table.history { width: 100%; border-collapse: collapse; margin-top: 1rem; font-size: 0.9375rem; }
+table.history th { font-size: 0.6875rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); text-align: left; }
+table.history th, table.history td { padding: 0.5rem 0.5rem 0.5rem 0; border-bottom: 1px solid var(--edge); vertical-align: top; }
+table.history a { color: var(--cyan); margin-right: 0.75rem; }
+.badge { font-weight: 700; } .badge.accepted { color: var(--pass); } .badge.refused { color: var(--magenta); } .badge.pending { color: var(--amber); }
+.tabs { display: flex; gap: 0.5rem; margin-top: 1rem; }
+.tabs a { padding: 0.5rem 0.875rem; border: 1px solid var(--edge); border-radius: 3px; color: var(--dim); text-decoration: none; font-weight: 600; }
+.tabs a[aria-current="true"] { color: var(--text); border-color: var(--cyan); }
 
 [hidden] { display: none !important; }

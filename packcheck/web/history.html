@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackCheck history</title>
+<link rel="stylesheet" href="/static/packcheck.css">
+</head>
+<body>
+<main class="wide">
+  <header>
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <h1 data-t="page.history_title" data-t-title="page.history_title">Scan history</h1>
+  </header>
+  <div class="topline">
+    <a class="link-button" href="/" data-t="desk.home">Home</a>
+    <button type="button" data-language="en" aria-pressed="true">EN</button>
+    <button type="button" data-language="fr">FR</button>
+  </div>
+
+  <nav class="tabs">
+    <a href="?range=day" data-range="day" data-t="history.day">Today</a>
+    <a href="?range=week" data-range="week" data-t="history.week">This week</a>
+    <a href="?range=month" data-range="month" data-t="history.month">This month</a>
+  </nav>
+  <p class="hint" id="none" hidden data-t="history.none"></p>
+  <table class="history" id="table" hidden>
+    <thead><tr><th data-t="history.when"></th><th data-t="history.product"></th><th data-t="history.code"></th>
+      <th data-t="history.by"></th><th data-t="history.form"></th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</main>
+
+<script src="/static/common.js"></script>
+<script>
+  const range = new URLSearchParams(location.search).get("range") || "day";
+  let packs = [];
+
+  function render() {
+    for (const tab of document.querySelectorAll("[data-range]")) tab.setAttribute("aria-current", String(tab.dataset.range === range));
+    $("none").hidden = packs.length > 0;
+    $("table").hidden = packs.length === 0;
+    $("rows").innerHTML = "";
+    for (const pack of packs) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td></td><td></td><td></td><td></td><td><span class="badge ${pack.verdict}"></span></td>
+        <td><a target="_blank" rel="noopener"></a><a target="_blank" rel="noopener"></a></td>`;
+      tr.children[0].textContent = (pack.created_at || "").replace("T", " ").slice(0, 16);
+      tr.children[1].textContent = pack.product_name;
+      tr.children[2].textContent = pack.product_code;
+      tr.children[3].textContent = pack.inspector || "—";
+      tr.querySelector(".badge").textContent = t("r79.verdict." + pack.verdict);
+      const [view, print] = tr.querySelectorAll("a");
+      view.href = `/report/pack/${pack.pack_id}?lang=${Strings.language}`;
+      view.textContent = t("history.view");
+      print.href = `/report/pack/${pack.pack_id}?lang=${Strings.language}&print=1`;
+      print.textContent = t("history.print");
+      $("rows").append(tr);
+    }
+  }
+
+  document.addEventListener("languagechange", render);
+
+  (async () => {
+    await loadStrings();
+    wireLanguageButtons();
+    packs = await (await fetch(`/api/packs?range=${encodeURIComponent(range)}`)).json();
+    render();
+  })();
+</script>
+</body>
+</html>

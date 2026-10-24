@@ -126,6 +126,7 @@ def simulate_photo(face, seed):
     """Turn a flat face into something that looks like a handheld phone photo of it."""
     rng = np.random.default_rng(seed)
     canvas_w, canvas_h = 1500, 2000
+    face_h, face_w = face.shape[:2]
 
     # A table: brown, with soft blotches.
     table = rng.normal(0, 18, (canvas_h // 20, canvas_w // 20)).astype(np.float32)
@@ -134,16 +135,16 @@ def simulate_photo(face, seed):
 
     # Where the 4 corners of the pack land: smaller, rotated a few degrees, each corner nudged
     # separately (that is what perspective does).
-    scale = 0.78 * min(canvas_w / ART_W, canvas_h / ART_H)
+    scale = 0.78 * min(canvas_w / face_w, canvas_h / face_h)
     angle = np.deg2rad(rng.uniform(-8, 8))
     rotation = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
-    corners = np.float32([[0, 0], [ART_W, 0], [ART_W, ART_H], [0, ART_H]])
-    centred = (corners - [ART_W / 2, ART_H / 2]) * scale
+    corners = np.float32([[0, 0], [face_w, 0], [face_w, face_h], [0, face_h]])
+    centred = (corners - [face_w / 2, face_h / 2]) * scale
     placed = centred @ rotation.T + [canvas_w / 2, canvas_h / 2] + rng.uniform(-45, 45, (4, 2))
     transform = cv2.getPerspectiveTransform(corners, np.float32(placed))
 
     pack = cv2.warpPerspective(face, transform, (canvas_w, canvas_h), flags=cv2.INTER_AREA)
-    pack_mask = cv2.warpPerspective(np.full((ART_H, ART_W), 255, np.uint8), transform, (canvas_w, canvas_h))
+    pack_mask = cv2.warpPerspective(np.full((face_h, face_w), 255, np.uint8), transform, (canvas_w, canvas_h))
     canvas[pack_mask > 0] = pack[pack_mask > 0]
 
     # Uneven lighting: darker towards one corner.
@@ -224,6 +225,68 @@ def draw_back_face(packed_on_text=None):
     # Small logo in the footer.
     cv2.putText(face, "DEMO PET FOODS", (560, 1385), FONT_BOLD, 0.9, FOREST, 2, cv2.LINE_AA)
     return face
+
+
+# ----------------------------------------------------------------- proof sheet
+
+# What a printer's proof adds around and on top of each face (see packcheck/proof.py).
+MAGENTA = (140, 40, 220)       # trim and seal lines
+PROOF_GREEN = (38, 96, 26)     # copy-safety box and its labels (measured on a real proof scan)
+PROOF_MARGIN = 160             # blank margin around the demo artwork, so all its print is "copy safe"
+PROOF_BLEED = 60               # artwork continued outside the trim line
+PROOF_SHEET = (2400, 3600)     # sheet height, width in pixels
+PROOF_FACE_ORIGINS = {"front": (300, 540), "back": (1950, 540)}   # top-left of each trimmed face on the sheet
+
+
+def proof_face(face):
+    """The demo artwork as it sits inside a proof's trim line: with a blank margin around it,
+    like a real face whose text and logos all stay inside the copy-safety box."""
+    return cv2.copyMakeBorder(face, PROOF_MARGIN, PROOF_MARGIN, PROOF_MARGIN, PROOF_MARGIN, cv2.BORDER_CONSTANT, value=PAPER)
+
+
+def _draw_proof_markup(face):
+    """Draw on a face what a proof draws inside the trim: copy-safety box, labels, arrows,
+    dashed seal lines. None of it is ever printed on a pack."""
+    height, width = face.shape[:2]
+    inset_x, inset_y = round(0.065 * width), round(0.065 * height)
+    cv2.rectangle(face, (inset_x, inset_y), (width - inset_x, height - inset_y), PROOF_GREEN, 2)
+    cv2.arrowedLine(face, (width - 140, 4), (width - 140, inset_y), PROOF_GREEN, 2, tipLength=0.2)
+    cv2.putText(face, "8mm", (width - 260, 70), FONT, 1.1, PROOF_GREEN, 2, cv2.LINE_AA)
+    cv2.putText(face, "8mm", (12, height // 2), FONT, 0.9, PROOF_GREEN, 2, cv2.LINE_AA)
+    cv2.putText(face, "8mm", (width // 2, height - 30), FONT, 1.1, PROOF_GREEN, 2, cv2.LINE_AA)
+    for x in (45, width - 45):   # dashed seal lines
+        for y in range(0, height, 32):
+            cv2.line(face, (x, y), (x, min(y + 20, height - 1)), MAGENTA, 2)
+    return face
+
+
+def draw_proof_sheet():
+    """A synthetic printer's proof: front and back of the demo pack on one sheet, with bleed,
+    trim lines, proof markup, a title block and headings - the layout of a real proof, made of
+    nothing confidential.
+
+    Returns (sheet, {face name: [x, y, w, h] fractions of the sheet, drawn along the trim},
+             {face name: the face as really printed, without markup}).
+    """
+    sheet_h, sheet_w = PROOF_SHEET
+    sheet = np.full((sheet_h, sheet_w, 3), WHITE, np.uint8)
+    cv2.rectangle(sheet, (100, 60), (sheet_w - 100, 260), INK, 2)
+    cv2.putText(sheet, "DEMO PRINTERS - PROOF  DOCKET 0000  APPROVED BY: ____", (140, 180), FONT, 1.6, INK, 3, cv2.LINE_AA)
+
+    rects, printed = {}, {}
+    for name, artwork in (("front", draw_face()), ("back", draw_back_face())):
+        face = proof_face(artwork)
+        printed[name] = face.copy()
+        height, width = face.shape[:2]
+        left, top = PROOF_FACE_ORIGINS[name]
+        bled = cv2.copyMakeBorder(face, PROOF_BLEED, PROOF_BLEED, PROOF_BLEED, PROOF_BLEED, cv2.BORDER_REPLICATE)
+        sheet[top - PROOF_BLEED:top + height + PROOF_BLEED, left - PROOF_BLEED:left + width + PROOF_BLEED] = bled
+        sheet[top:top + height, left:left + width] = _draw_proof_markup(face.copy())
+        cv2.rectangle(sheet, (left - 3, top - 3), (left + width + 2, top + height + 2), MAGENTA, 3)   # trim line, just outside the face
+        cv2.putText(sheet, name.upper(), (left + width // 2 - 120, top - 140), FONT_BOLD, 2.5, (190, 110, 20), 5, cv2.LINE_AA)
+        cv2.putText(sheet, "10mm Bleed", (left + width // 2 - 150, top - 75), FONT, 1.3, MAGENTA, 3, cv2.LINE_AA)
+        rects[name] = [left / sheet_w, top / sheet_h, width / sheet_w, height / sheet_h]
+    return sheet, rects, printed
 
 
 def _fraction(box):

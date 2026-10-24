@@ -15,121 +15,207 @@
     <h1 data-t="page.desk_title" data-t-title="page.desk_title">Inspection desk</h1>
   </header>
   <div class="topline">
-    <a class="link-button" href="/" data-t="desk.phone_link">Check a package ↗</a>
-    <a class="link-button" id="report-link" href="#" target="_blank" rel="noopener" data-t="desk.open_report">Open today's report</a>
+    <a class="link-button" href="/" data-t="desk.home">Home</a>
+    <a class="link-button" href="/history" target="_blank" rel="noopener" data-t="desk.see_history">History</a>
+    <span id="signed-in" hidden><span data-t="login.signed_in_as">Signed in as</span> <b id="signed-in-name"></b>
+      <button type="button" id="sign-out" data-t="login.sign_out">Sign out</button></span>
     <button type="button" id="new-session" data-t="desk.new_session">New session</button>
     <button type="button" data-language="en" aria-pressed="true">EN</button>
     <button type="button" data-language="fr">FR</button>
   </div>
 
-  <!-- The QR hand-off: this screen makes up a session, shows its link as a QR code; the phone
-       that scans it sends every inspection with that session id, and this screen polls for
-       them. Polling (asking every 2 s) is the plain alternative to WebSockets: nothing to
-       install, easy to explain, and 2 s is fast enough for a person walking between packs. -->
-  <div class="desk">
-    <div>
-      <p data-t="desk.intro">Scan this code with the phone. Every pack it checks appears here.</p>
-      <img class="qr" id="qr" alt="QR code">
-      <p class="link-text" id="link"></p>
-    </div>
-    <div>
-      <p id="waiting" class="hint" data-t="desk.waiting">Waiting for the phone…</p>
-      <div id="inspections"></div>
-    </div>
+  <section id="login" hidden>
+    <h2 data-t="login.title">Sign in</h2>
+    <label for="login-name" data-t="login.name">Name</label>
+    <input id="login-name" type="text" autocomplete="username">
+    <label for="login-pin" data-t="login.pin">PIN</label>
+    <input id="login-pin" type="password" inputmode="numeric" autocomplete="current-password">
+    <p id="login-error" class="error-text" hidden></p>
+    <button class="button" id="login-button" type="button" data-t="login.button">Sign in</button>
+  </section>
+
+  <!-- 1. Pairing. This screen makes up a session and shows its link as a QR code; the phone
+       that opens it tells the server "connected", and from then on sends its photos with
+       that session id. This screen asks the server every 2 s what happened (polling: the
+       plain alternative to WebSockets, nothing to install, fast enough for a person). -->
+  <section id="pairing">
+    <p data-t="desk.scan_qr">Scan this code with your phone's camera.</p>
+    <img class="qr" id="qr" alt="QR code">
+    <p class="link-text" id="link"></p>
+    <p class="status-line" data-t="desk.waiting_phone">Waiting for the phone to connect…</p>
+  </section>
+
+  <!-- 2. Connected: waiting for the phone's two photos, then checking them. -->
+  <p class="status-line connected" id="connected" hidden data-t="desk.connected"></p>
+  <div id="checking" hidden role="status">
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <span data-t="desk.checking">Checking the photos…</span>
   </div>
+
+  <!-- 3. The result of one pack: both faces, every difference to review, and what next. -->
+  <section id="result" hidden>
+    <h2 id="result-name"></h2>
+    <div class="verdict" id="form-verdict"></div>
+    <ul id="form-missing" class="hint"></ul>
+    <div class="actions">
+      <button class="button" id="next-scan" type="button" data-t="desk.next_scan">Scan another pack</button>
+      <a class="button secondary" id="see-report" target="_blank" rel="noopener" data-t="desk.see_report">See the report</a>
+      <a class="button secondary" id="print-report" target="_blank" rel="noopener" data-t="desk.print_report">Print the report</a>
+    </div>
+    <p class="hint" id="review-hint" data-t="desk.review_hint"></p>
+    <div id="faces"></div>
+  </section>
 </main>
 
 <script src="/static/common.js"></script>
 <script>
-  const Desk = { sessionId: null, lastId: 0, timer: null };
+  const Desk = { sessionId: null, lastId: 0, timer: null, connected: false, packs: {}, shownPack: null, checklist: [] };
 
   async function startSession() {
     Desk.sessionId = (await (await fetch("/api/sessions", { method: "POST" })).json()).session_id;
-    Desk.lastId = 0;
-    $("inspections").innerHTML = "";
-    $("waiting").hidden = false;
+    Desk.lastId = 0; Desk.connected = false; Desk.packs = {}; Desk.shownPack = null;
     // Not location.origin: if THIS screen opened /desk as localhost/127.0.0.1, that
     // address only means "this same device" and a phone scanning it could never reach it.
     const { url: base } = await (await fetch("/api/server-url")).json();
-    const link = `${base}/?session=${Desk.sessionId}`;
+    const link = `${base}/phone?session=${Desk.sessionId}`;
     $("link").textContent = link;
     $("qr").src = `/api/qr.png?text=${encodeURIComponent(link)}`;
+    showState("pairing");
     if (Desk.timer) clearInterval(Desk.timer);
     Desk.timer = setInterval(poll, 2000);
   }
 
   async function poll() {
+    const session = await (await fetch(`/api/sessions/${Desk.sessionId}`)).json();
+    if (session.connected && !Desk.connected) { Desk.connected = true; if (!Desk.shownPack) showState("connected"); }
+    if (Desk.connected && !Desk.shownPack) showState(session.checking ? "checking" : "connected");
+
     const response = await fetch(`/api/inspections?session=${Desk.sessionId}&after_id=${Desk.lastId}`);
     if (!response.ok) return;
     for (const inspection of await response.json()) {
       Desk.lastId = Math.max(Desk.lastId, inspection.id);
-      $("inspections").prepend(card(inspection));
-      $("waiting").hidden = true;
+      (Desk.packs[inspection.pack_id] ||= []).push(inspection);
+      // A scan is complete when both of its faces are in: only then is it shown.
+      if (Desk.packs[inspection.pack_id].length === 2) showPack(inspection.pack_id);
     }
   }
 
-  function card(inspection) {
+  function showState(state) {
+    $("pairing").hidden = state !== "pairing";
+    $("connected").hidden = state !== "connected";
+    $("checking").hidden = state !== "checking";
+    $("result").hidden = state !== "result";
+  }
+
+  async function showPack(packId) {
+    Desk.shownPack = packId;
+    // The server always saves a scan's front first, then its back (server._inspect_pack).
+    const inspections = Desk.packs[packId].sort((a, b) => a.id - b.id);
+    $("faces").innerHTML = "";
+    inspections.forEach((inspection, index) => $("faces").append(faceBlock(inspection, index === 0 ? "front" : "back")));
+    $("review-hint").hidden = !inspections.some((inspection) => inspection.differences.length);
+    $("see-report").href = `/report/pack/${packId}?lang=${Strings.language}`;
+    $("print-report").href = `/report/pack/${packId}?lang=${Strings.language}&print=1`;
+    await refreshVerdict();
+    showState("result");
+    window.scrollTo(0, 0);
+  }
+
+  /* The pack's R79 verdict, asked again after every decision: it changes as differences are reviewed. */
+  async function refreshVerdict() {
+    const pack = await (await fetch(`/api/packs/${Desk.shownPack}`)).json();
+    $("result-name").textContent = `${pack.product_name} · ${pack.product_code}`;
+    $("form-verdict").className = "verdict " + pack.verdict;
+    $("form-verdict").textContent = `${t("desk.form")}: ${t("r79.verdict." + pack.verdict)}`;
+    $("form-missing").innerHTML = "";
+    for (const [key, values] of pack.missing) {
+      const li = document.createElement("li");
+      li.textContent = t(key, values.face ? { ...values, face: t("r79.face." + values.face) } : values);
+      $("form-missing").append(li);
+    }
+  }
+
+  function faceBlock(inspection, face) {
     const div = document.createElement("div");
-    div.className = "card " + inspection.status;
-    const statusText = {
+    div.className = "face-result";
+    const count = inspection.differences.length;
+    const verdict = {
       ok: t("verdict.ok"),
-      differences_found: inspection.differences.length === 1 ? t("verdict.one_difference") : t("verdict.differences", { count: inspection.differences.length }),
+      differences_found: count === 1 ? t("verdict.one_difference") : t("verdict.differences", { count }),
       alignment_failed: t("verdict.alignment_failed"),
     }[inspection.status];
-    const readingsKey = readingsVerdict(inspection.readings_status);
-    div.innerHTML = `<h3></h3><p class="meta"></p><p><b class="status"></b> <span class="readings-status"></span></p>`;
-    div.querySelector("h3").textContent = inspection.product_name;
-    div.querySelector(".meta").textContent = `${t("desk.inspected_at")} ${inspection.created_at.replace("T", " ")}`
-      + (inspection.inspector ? ` · ${inspection.inspector}` : "") + (inspection.work_order ? ` · ${inspection.work_order}` : "");
-    div.querySelector(".status").textContent = statusText;
-    div.querySelector(".readings-status").textContent = readingsKey ? "· " + t(readingsKey) : "";
-
-    if (inspection.differences.length) {
-      const table = document.createElement("table");
-      table.innerHTML = `<thead><tr><th>#</th><th>${t("report.kind")}</th><th>ΔE</th><th>${t("report.decision")}</th></tr></thead><tbody></tbody>`;
-      for (const difference of inspection.differences) {
-        const tr = document.createElement("tr");
-        const decision = difference.decision ? t(difference.decision.decision === "confirm" ? "differences.confirmed" : "differences.dismissed") : t("differences.undecided");
-        tr.innerHTML = `<td>${difference.number}</td><td>${t(difference.kind === "content" ? "differences.content" : "differences.colour")}</td><td>${difference.mean_delta_e}</td><td>${decision}</td>`;
-        table.querySelector("tbody").append(tr);
-      }
-      div.append(table);
+    div.innerHTML = `<h3></h3><div class="verdict ${inspection.status}"></div><p class="explanation"></p>
+      <a class="comparison" target="_blank" rel="noopener"><img alt=""></a><ol class="differences"></ol>`;
+    const heading = t("r79.face_heading", { face: t("r79.face." + face), name: inspection.product_name });
+    div.querySelector("h3").textContent = heading.charAt(0).toUpperCase() + heading.slice(1);
+    div.querySelector(".verdict").textContent = verdict;
+    div.querySelector(".explanation").textContent = inspection.status === "alignment_failed" ? inspection.message : "";
+    if (inspection.status === "alignment_failed") div.querySelector(".comparison").remove();
+    else {
+      const url = `/runs/${inspection.run}/comparison.jpg`;
+      div.querySelector(".comparison").href = url;
+      div.querySelector(".comparison img").src = url;
     }
-    const readings = inspection.readings.filter((reading) => reading.name);
-    if (readings.length) {
-      const table = document.createElement("table");
-      table.innerHTML = `<thead><tr><th>${t("report.field")}</th><th>${t("report.read")}</th><th>${t("report.verdict")}</th></tr></thead><tbody></tbody>`;
-      for (const reading of readings) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `<td></td><td></td><td class="${readingClass(reading.valid)}"></td>`;
-        tr.children[0].textContent = reading.name.replaceAll("_", " ");
-        tr.children[1].textContent = reading.text ?? "—";
-        tr.children[2].textContent = readingWord(reading.valid) + (reading.reason ? ` (${reading.reason})` : "");
-        table.querySelector("tbody").append(tr);
-      }
-      div.append(table);
-    }
-    if (inspection.status !== "alignment_failed") {
-      const link = document.createElement("a");
-      link.href = `/runs/${inspection.run}/comparison.jpg`;
-      link.target = "_blank"; link.rel = "noopener";
-      link.textContent = t("report.comparison");
-      div.append(link);
-    }
+    for (const difference of inspection.differences) div.querySelector(".differences").append(differenceItem(inspection, difference));
     return div;
   }
 
-  function updateReportLink() {
-    $("report-link").href = `/report?day=${todayIso()}&lang=${Strings.language}`;
+  /* One difference: close-up, a note, which R79 point it breaks, Confirm / Dismiss. */
+  function differenceItem(inspection, difference) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="number">${difference.number}</span>
+      <span><span class="kind"></span><span class="detail"></span>
+      <img class="closeup" alt="">
+      <input type="text" class="note">
+      <label>${t("desk.point")}</label><select class="point"></select>
+      <div class="decision-buttons"></div><span class="decision" hidden></span></span>`;
+    li.querySelector(".kind").textContent = t(difference.kind === "content" ? "differences.content" : "differences.colour");
+    li.querySelector(".detail").textContent = t(difference.kind === "content" ? "differences.content_detail" : "differences.colour_detail");
+    li.querySelector(".closeup").src = `/runs/${inspection.run}/${difference.closeup}`;
+    li.querySelector(".note").placeholder = t("differences.note");
+    const select = li.querySelector(".point");
+    select.append(new Option(t("desk.point_none"), ""));
+    for (const key of Desk.checklist) select.append(new Option(t("r79.item." + key), key));
+    for (const decision of ["confirm", "dismiss"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button small " + decision;
+      button.textContent = t("differences." + decision);
+      button.addEventListener("click", () => decide(li, difference, decision));
+      li.querySelector(".decision-buttons").append(button);
+    }
+    return li;
   }
 
+  async function decide(li, difference, decision) {
+    if (!mayAct()) { alert(t("error.not_signed_in")); return; }
+    const response = await fetch(`/api/differences/${difference.id}/decisions`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, note: li.querySelector(".note").value, checklist_item: li.querySelector(".point").value || null }),
+    });
+    if (!response.ok) { alert(t("error.generic")); return; }
+    for (const button of li.querySelectorAll(".decision-buttons button")) {
+      button.setAttribute("aria-pressed", String(button.classList.contains(decision)));
+    }
+    const label = li.querySelector(".decision");
+    label.className = "decision " + (decision === "confirm" ? "confirmed" : "dismissed");
+    label.textContent = t(decision === "confirm" ? "differences.confirmed" : "differences.dismissed");
+    label.hidden = false;
+    await refreshVerdict();
+  }
+
+  $("next-scan").addEventListener("click", () => { Desk.shownPack = null; showState("connected"); });
   $("new-session").addEventListener("click", startSession);
-  document.addEventListener("languagechange", updateReportLink);
+  document.addEventListener("languagechange", () => { if (Desk.shownPack) showPack(Desk.shownPack); });
 
   (async () => {
     await loadStrings();
     wireLanguageButtons();
-    updateReportLink();
+    wireLogin();
+    await refreshLogin();
+    Desk.checklist = await (await fetch("/api/checklist")).json();
     await startSession();
   })();
 </script>

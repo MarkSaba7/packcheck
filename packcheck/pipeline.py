@@ -96,6 +96,11 @@ def inspect_photo(photo_path, product, out_dir, compare_settings=None, today=Non
         result["warnings"].append(f"The photo shows only {coverage:.0%} of the face. Retake it with the whole face visible.")
     for _, (x, y, w, h) in zones_px:
         mask[y:y + h, x:x + w] = 0
+    # Proof markup (trim lines, "8mm" labels...) is in the reference but never on a pack.
+    if product.markup_path is not None:
+        markup = cv2.imread(str(product.markup_path), cv2.IMREAD_GRAYSCALE)
+        markup = cv2.resize(markup, (width, height), interpolation=cv2.INTER_NEAREST)
+        mask[markup > 0] = 0
     border = max(1, round(BORDER_FRACTION * max(width, height)))
     mask[:border, :] = 0
     mask[-border:, :] = 0

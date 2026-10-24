@@ -1,18 +1,25 @@
-"""The web server: a JSON API plus the pages (phone, desk, zone editor, report).
+"""The web server: a JSON API plus the pages (home, desk, phone, artworks, reports).
 
     uvicorn packcheck.server:app --host 0.0.0.0 --port 8000
 
-Then open http://<this computer's IP>:8000 on a phone that is on the same Wi-Fi, or
-http://<ip>:8000/desk on a computer screen next to the packs.
+Then open http://<this computer's IP>:8000 on the computer next to the packs. The flow:
+
+    home  --"Start scanning"-->  desk (QR code)  <--scanned by--  phone (front + back photos)
+          --"Add an artwork"-->  artwork page (proof PDF -> front + back products)
+    desk / history  --> one R79 form per scanned pack, to view or print
 
 Pages and API are kept separate on purpose: every page only calls the API, so a future
 native app could use exactly the same endpoints.
 
 Pages
-    GET  /                                the phone page
-    GET  /desk                            desk screen: shows a QR code, lists what the paired phone checks
+    GET  /                                home: Start scanning / Add an artwork
+    GET  /desk                            the computer's scanning screen: QR code, results, next scan / report
+    GET  /phone?session=...               the phone's page, opened from the desk's QR code: front + back, send
+    GET  /history                         the packs scanned today / this week / this month
+    GET  /artworks/new                    add an artwork from a printer's proof (draw front and back)
     GET  /products/{id}/zones             zone editor for one product
-    GET  /report?day=YYYY-MM-DD           printable report (or ?work_order=..., &lang=fr)
+    GET  /report/pack/{pack_id}           the R79 form for one scanned pack (&print=1 opens the print dialog)
+    GET  /report?day=YYYY-MM-DD           printable summary of a day (or ?work_order=..., &lang=fr)
 
 API
     GET  /api/me                          {login_required, user}
@@ -21,6 +28,12 @@ API
     GET  /api/products                    products that can be checked (id, name, pack, face, barcode)
     GET  /api/products/{id}               one product with its zones
     GET  /api/products/{id}/reference.png the artwork (for the zone editor)
+    GET  /api/products/{id}/markup.png    the proof markup mask, if the product came from a proof
+    POST /api/proofs  file                a proof PDF / scan -> {proof_id, width, height}; kept in private/proofs/
+    GET  /api/proofs/{id}/sheet.png       the rendered sheet
+    POST /api/proofs/{id}/products        {pack, name, barcode?, label_code?, faces: [{face, rect}], allow_similar?}
+                                          -> the front and back products (see proof.py); 409 if already known
+    POST /api/codes  photo                the barcodes / QR codes readable in a photo
     PUT  /api/products/{id}/zones         save the zone list
     POST /api/products/lookup  photo      find products by the barcode / QR code in the photo
     POST /api/inspections  form           photo, product_id?, work_order?, inspector?, pack_id?, session_id?
@@ -28,10 +41,18 @@ API
                                           if that is ambiguous, returns {status: identify_ambiguous|identify_failed,
                                           message, candidates} instead of running the inspection - resubmit the
                                           SAME photo with product_id set to what the worker picked.
+    POST /api/packs/inspect  form         front, back, session_id?, inspector?, pack?: ONE pack, both faces.
+                                          The pack is found from both photos (identify.identify_pack); if that
+                                          is unclear: {status: identify_ambiguous|identify_failed, candidates},
+                                          and the phone resends the same photos with pack set.
+    GET  /api/packs?range=day|week|month  scanned packs with their R79 verdict, newest first
+    GET  /api/packs/{pack_id}             one scanned pack: verdict, what is still missing, faces
+    GET  /api/checklist                   the keys of the R79's 12 points (r79.CHECKLIST)
     GET  /api/inspections                 ?day= ?work_order= ?session= ?pack_id= ?after_id=
-    POST /api/differences/{id}/decisions  {decision: confirm|dismiss, note?}
+    POST /api/differences/{id}/decisions  {decision: confirm|dismiss, note?, checklist_item?}
     POST /api/sessions                    {session_id}: a new desk session
-    GET  /api/sessions/{id}               does it exist?
+    GET  /api/sessions/{id}               {session_id, connected, checking}: the desk polls it
+    POST /api/sessions/{id}/connect       the phone says it opened the session's link
     GET  /api/server-url                  {url}: a LAN address a phone can actually reach (see local_network_ip)
     GET  /api/qr.png?text=...             a QR code image
     GET  /runs/<run>/<file>               result images written by the pipeline
@@ -43,21 +64,24 @@ the login is a random ticket kept in a cookie and looked up in the database (no 
 library needed: the server simply remembers which tickets it handed out).
 """
 
+import re
 import shutil
 import socket
 import uuid
+from datetime import date, timedelta
 from pathlib import Path
 
 import cv2
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import storage
+from . import proof, r79, storage
 from .codes import decode_codes, make_qr_png
-from .identify import identify_product
+from .identify import identify_pack, identify_product, packs_with_front_and_back
 from .pipeline import inspect_photo, new_run_dir
 from .product import list_products, save_zones
 from .report import render_report
@@ -66,8 +90,10 @@ ROOT = Path(__file__).resolve().parent.parent
 PRODUCTS_DIR = ROOT / "products"
 RUNS_DIR = ROOT / "runs"
 DATABASE_PATH = ROOT / "packcheck.sqlite"
+PROOFS_DIR = ROOT / "private" / "proofs"   # uploaded proofs are company artwork: private/ is ignored by git
 WEB_DIR = Path(__file__).resolve().parent / "web"
 MAX_PHOTO_BYTES = 25 * 1024 * 1024
+MAX_PROOF_BYTES = 50 * 1024 * 1024
 LOGIN_COOKIE = "packcheck_login"
 
 RUNS_DIR.mkdir(exist_ok=True)
@@ -94,6 +120,18 @@ def products_dir():
 
 def runs_dir():
     return app.state.runs_dir if hasattr(app.state, "runs_dir") else RUNS_DIR
+
+
+def proofs_dir():
+    return app.state.proofs_dir if hasattr(app.state, "proofs_dir") else PROOFS_DIR
+
+
+def proof_folder(proof_id):
+    # The id is one the server made up (hex). Checking its shape means a crafted id such as
+    # "../../products" can never point outside private/proofs/.
+    if not re.fullmatch(r"[0-9a-f]{12}", proof_id) or not (proofs_dir() / proof_id).is_dir():
+        raise HTTPException(status_code=404, detail="Unknown proof.")
+    return proofs_dir() / proof_id
 
 
 def current_user(request: Request, connection=Depends(database)):
@@ -132,13 +170,34 @@ async def read_upload(upload):
 # -------------------------------------------------------------------- pages
 
 @app.get("/")
-def phone_page():
-    return FileResponse(WEB_DIR / "index.html")
+def home_page():
+    return FileResponse(WEB_DIR / "home.html")
 
 
 @app.get("/desk")
 def desk_page():
     return FileResponse(WEB_DIR / "desk.html")
+
+
+@app.get("/phone")
+def phone_page():
+    return FileResponse(WEB_DIR / "phone.html")
+
+
+@app.get("/history")
+def history_page():
+    return FileResponse(WEB_DIR / "history.html")
+
+
+@app.get("/artworks/new")
+def new_artwork_page():
+    return FileResponse(WEB_DIR / "artwork.html")
+
+
+@app.get("/report/pack/{pack_id}", response_class=HTMLResponse)
+def pack_report_page(pack_id: str, lang: str = "fr", print: bool = False, connection=Depends(database)):
+    form = pack_form(connection, pack_id)
+    return r79.render_form(form, language=lang, print_on_load=print)
 
 
 @app.get("/products/{product_id}/zones")
@@ -198,12 +257,86 @@ def get_product(product_id: str):
     product = find_product(product_id)
     zones = [{"name": zone.name, "kind": zone.kind, "rect": list(zone.rect), "expect": zone.expect} for zone in product.zones]
     return {**product_summary(product), "zones": zones, "compare_settings": product.compare_settings,
-            "has_golden_photo": product.golden_path is not None}
+            "has_golden_photo": product.golden_path is not None, "has_markup": product.markup_path is not None}
 
 
 @app.get("/api/products/{product_id}/reference.png")
 def get_reference(product_id: str):
     return FileResponse(find_product(product_id).reference_path)
+
+
+@app.get("/api/products/{product_id}/markup.png")
+def get_markup(product_id: str):
+    product = find_product(product_id)
+    if product.markup_path is None:
+        raise HTTPException(status_code=404, detail="This product has no markup mask.")
+    return FileResponse(product.markup_path)
+
+
+# ------------------------------------------------------------------- proofs
+
+@app.post("/api/proofs")
+async def upload_proof(file: UploadFile = File(...), user=Depends(require_user)):
+    """Keep the proof and its rendered sheet in private/proofs/<id>/, so the page can show the
+    sheet and the person can draw the faces on it."""
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_PROOF_BYTES:
+        raise HTTPException(status_code=413, detail="The proof is larger than 50 MB.")
+    try:
+        sheet = proof.load_sheet(file_bytes)
+    except Exception as error:   # pdfium raises its own error types for broken PDFs
+        raise HTTPException(status_code=400, detail=f"Could not read that proof: {error}")
+    proof_id = uuid.uuid4().hex[:12]
+    folder = proofs_dir() / proof_id
+    folder.mkdir(parents=True)
+    (folder / ("proof.pdf" if file_bytes[:5] == b"%PDF-" else "proof.img")).write_bytes(file_bytes)
+    (folder / "name.txt").write_text(Path(file.filename or "proof").name, encoding="utf-8")
+    cv2.imwrite(str(folder / "sheet.png"), sheet)
+    return {"proof_id": proof_id, "width": sheet.shape[1], "height": sheet.shape[0]}
+
+
+@app.get("/api/proofs/{proof_id}/sheet.png")
+def get_proof_sheet(proof_id: str):
+    return FileResponse(proof_folder(proof_id) / "sheet.png")
+
+
+class ProofFace(BaseModel):
+    face: str           # "front", "back"...
+    rect: list          # [x, y, w, h] as fractions of the sheet, drawn along the trim line
+
+
+class ProofProductsBody(BaseModel):
+    pack: str                   # the product code, groups the faces: "80520S"
+    name: str                   # "Hagen Tropican Lifetime 2 mm"
+    barcode: str = None         # typed, or read from a photo of the barcode (POST /api/codes)
+    label_code: str = None      # "#Code étiquette" on the R79, if the company uses one
+    faces: list[ProofFace]
+    allow_similar: bool = False # a person checked: it only LOOKS like an existing artwork
+
+
+@app.post("/api/proofs/{proof_id}/products")
+def create_proof_products(proof_id: str, body: ProofProductsBody, user=Depends(require_user)):
+    folder = proof_folder(proof_id)
+    sheet = cv2.imread(str(folder / "sheet.png"), cv2.IMREAD_COLOR)
+    source = (folder / "name.txt").read_text(encoding="utf-8")
+    try:
+        product_ids = proof.create_products(sheet, products_dir(), body.pack, body.name, [face.model_dump() for face in body.faces],
+                                            source=source, barcode=body.barcode, label_code=body.label_code,
+                                            allow_similar=body.allow_similar)
+    except proof.DuplicateArtwork as error:
+        raise HTTPException(status_code=409, detail={"message": str(error), "can_override": error.can_override})
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    return {"product_ids": product_ids}
+
+
+@app.post("/api/codes")
+async def read_codes(photo: UploadFile = File(...)):
+    """The barcodes in a photo - used by the artwork page's "scan the barcode" button."""
+    image = cv2.imdecode(np.frombuffer(await read_upload(photo), np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(status_code=400, detail="That file is not a photo the server can read.")
+    return {"codes": decode_codes(image)}
 
 
 class ZonesBody(BaseModel):
@@ -295,16 +428,132 @@ def get_inspections(day: str = None, work_order: str = None, session: str = None
                                     pack_id=pack_id, after_id=after_id)
 
 
+# -------------------------------------------------------------------- packs
+
+@app.post("/api/packs/inspect")
+async def inspect_pack(
+    front: UploadFile = File(...),
+    back: UploadFile = File(...),
+    session_id: str = Form(None),
+    inspector: str = Form(None),
+    pack: str = Form(None),         # set when the worker picked the pack after an unclear match
+    user=Depends(require_user),
+    connection=Depends(database),
+):
+    """One scan = one physical pack: the front photo and the back photo, checked together."""
+    if session_id and not storage.session_exists(connection, session_id):
+        raise HTTPException(status_code=404, detail=f"Unknown session: {session_id}")
+    photos = [await read_upload(front), await read_upload(back)]
+    images = [cv2.imdecode(np.frombuffer(photo, np.uint8), cv2.IMREAD_COLOR) for photo in photos]
+    if any(image is None for image in images):
+        raise HTTPException(status_code=400, detail="A file is not a photo the server can read. Use a JPEG or PNG.")
+
+    # Checking two photos takes several seconds. It runs in a worker thread so the server
+    # keeps answering the desk screen meanwhile - which is how the desk can show "checking".
+    if session_id:
+        storage.set_session_checking(connection, session_id, True)
+    try:
+        return await run_in_threadpool(_inspect_pack, connection, photos, images, pack, session_id, user or inspector)
+    finally:
+        if session_id:
+            storage.set_session_checking(connection, session_id, False)
+
+
+def _inspect_pack(connection, photos, images, chosen_pack, session_id, inspector):
+    products = list_products(products_dir())
+    swapped = False
+    if chosen_pack:
+        packs = packs_with_front_and_back(products)
+        if chosen_pack not in packs:
+            raise HTTPException(status_code=404, detail=f"Unknown artwork: {chosen_pack}")
+        front_product, back_product = packs[chosen_pack]
+    else:
+        found = identify_pack(images[0], images[1], products)
+        if found.pack is None:
+            return {"status": "identify_ambiguous" if found.candidates else "identify_failed", "message": found.message,
+                    "candidates": [{"pack": candidate.pack, "name": candidate.name} for candidate in found.candidates]}
+        front_product, back_product, swapped = found.pack.front, found.pack.back, found.swapped
+    if swapped:
+        photos, images = photos[::-1], images[::-1]
+
+    pack_id = new_pack_id()
+    faces = []
+    for product, photo_bytes, image in ((front_product, photos[0], images[0]), (back_product, photos[1], images[1])):
+        run_dir = new_run_dir(runs_dir(), product.product_id)
+        photo_path = run_dir / "photo.jpg"
+        photo_path.write_bytes(photo_bytes)
+        result = inspect_photo(photo_path, product, run_dir)
+        result["codes_read"] = decode_codes(image)   # for the R79's "Présence du code UPC"
+        if swapped:
+            result["warnings"].append("The front and back photos were the other way round; PackCheck swapped them.")
+        storage.save_inspection(connection, result, run_dir.name, inspector=inspector, pack_id=pack_id, session_id=session_id)
+        result["run"] = run_dir.name
+        result["face"] = product.face
+        faces.append(result)
+    return {"status": "inspected", "pack_id": pack_id, "name": front_product.name.removesuffix(" - front"), "faces": faces}
+
+
+def pack_form(connection, pack_id):
+    """The filled R79 for one pack (see r79.fill_form)."""
+    inspections = storage.list_inspections(connection, pack_id=pack_id)
+    if not inspections:
+        raise HTTPException(status_code=404, detail="Unknown scan.")
+    products = {product.product_id: product for product in list_products(products_dir())}
+    first = products.get(inspections[0]["product_id"])
+    same_artwork = [p.product_id for p in products.values() if first and p.pack and p.pack == first.pack] or [inspections[0]["product_id"]]
+    earlier = storage.count_earlier_inspections(connection, same_artwork, inspections[0]["id"])
+    return r79.fill_form(inspections, products, earlier)
+
+
+def pack_summary(connection, pack_id):
+    form = pack_form(connection, pack_id)
+    return {
+        "pack_id": pack_id,
+        "created_at": form["faces"][0][1]["created_at"] if form["faces"] else None,
+        "product_name": form["product_name"],
+        "product_code": form["product_code"],
+        "inspector": form["inspector"],
+        "verdict": form["verdict"],                 # accepted | refused | pending
+        "missing": [[key, values] for key, values in form["missing"]],
+        "faces": [{"face": face, "status": inspection["status"], "differences": len(inspection["differences"])}
+                  for face, inspection in form["faces"]],
+    }
+
+
+HISTORY_DAYS = {"day": 0, "week": 6, "month": 29}   # "this week" = today and the 6 days before
+
+
+@app.get("/api/packs")
+def get_packs(range: str = "day", connection=Depends(database)):
+    if range not in HISTORY_DAYS:
+        raise HTTPException(status_code=400, detail="range must be day, week or month")
+    since = (date.today() - timedelta(days=HISTORY_DAYS[range])).isoformat()
+    return [pack_summary(connection, pack_id) for pack_id in storage.list_pack_ids(connection, since)]
+
+
+@app.get("/api/packs/{pack_id}")
+def get_pack(pack_id: str, connection=Depends(database)):
+    return pack_summary(connection, pack_id)
+
+
+@app.get("/api/checklist")
+def get_checklist():
+    return r79.CHECKLIST
+
+
 class DecisionBody(BaseModel):
     decision: str      # "confirm" | "dismiss"
     note: str = None
     decided_by: str = None
+    checklist_item: str = None   # which R79 point a confirmed difference breaks
 
 
 @app.post("/api/differences/{difference_id}/decisions")
 def post_decision(difference_id: int, body: DecisionBody, user=Depends(require_user), connection=Depends(database)):
+    if body.checklist_item and body.checklist_item not in r79.CHECKLIST:
+        raise HTTPException(status_code=400, detail=f"Unknown checklist point: {body.checklist_item}")
     try:
-        return storage.save_decision(connection, difference_id, body.decision, body.note, user or body.decided_by)
+        return storage.save_decision(connection, difference_id, body.decision, body.note, user or body.decided_by, body.checklist_item)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     except KeyError:
@@ -320,9 +569,19 @@ def create_session(connection=Depends(database)):
 
 @app.get("/api/sessions/{session_id}")
 def get_session(session_id: str, connection=Depends(database)):
-    if not storage.session_exists(connection, session_id):
+    session = storage.get_session(connection, session_id)
+    if session is None:
         raise HTTPException(status_code=404, detail="Unknown session.")
-    return {"session_id": session_id}
+    return {"session_id": session_id, "connected": session["connected_at"] is not None, "checking": bool(session["checking"])}
+
+
+@app.post("/api/sessions/{session_id}/connect")
+def connect_session(session_id: str, connection=Depends(database)):
+    """Called by the phone page as soon as it opens: the desk then says "phone connected"."""
+    if not storage.session_exists(connection, session_id):
+        raise HTTPException(status_code=404, detail="Unknown session. Scan the QR code on the computer again.")
+    storage.mark_session_connected(connection, session_id)
+    return {"session_id": session_id, "connected": True}
 
 
 @app.get("/api/qr.png")

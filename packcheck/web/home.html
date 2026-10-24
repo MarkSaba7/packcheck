@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackCheck</title>
+<link rel="stylesheet" href="/static/packcheck.css">
+</head>
+<body>
+<main>
+  <header>
+    <!-- A printer's registration mark: the target used to check that inks line up. -->
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <h1 data-t="app.title" data-t-title="app.title">PackCheck</h1>
+  </header>
+  <div class="topline">
+    <a class="link-button" href="/history" data-t="home.history">Scan history</a>
+    <button type="button" data-language="en" aria-pressed="true">EN</button>
+    <button type="button" data-language="fr">FR</button>
+  </div>
+
+  <!-- The two things anyone comes here to do. Everything else is reached from them. -->
+  <nav class="home">
+    <a class="home-choice" href="/desk">
+      <span class="home-number">1</span>
+      <b data-t="home.scan">Start scanning</b>
+      <span data-t="home.scan_hint"></span>
+    </a>
+    <a class="home-choice" href="/artworks/new">
+      <span class="home-number">2</span>
+      <b data-t="home.add">Add an artwork</b>
+      <span data-t="home.add_hint"></span>
+    </a>
+  </nav>
+</main>
+
+<script src="/static/common.js"></script>
+<script>
+  (async () => {
+    await loadStrings();
+    wireLanguageButtons();
+  })();
+</script>
+</body>
+</html>

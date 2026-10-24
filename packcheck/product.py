@@ -63,8 +63,10 @@ class Product:
     json_path: Path = None          # where product.json lives (the zone editor writes back to it)
     pack: str = None                # groups the faces of one package: "demo-dog-food" (milestone 4)
     face: str = None                # "front", "back", "side"... (milestone 4)
-    barcode: str = None             # what the pack's barcode says; used only to PICK the product (milestone 4)
+    barcode: str = None             # what the pack's barcode says; picks the product, and checked on the R79 form
+    label_code: str = None          # the label's own code ("#Code étiquette" on the R79 form), if the company has one
     golden_path: Path = None        # photo of a known-good pack: the colour reference (milestone 5)
+    markup_path: Path = None        # mask of proof markup (trim lines, labels) never compared; see proof.py
     compare_settings: dict = field(default_factory=dict)   # per-product thresholds for compare.find_differences
 
 
@@ -98,6 +100,12 @@ def load_product(json_path):
         if not golden_path.exists():
             raise FileNotFoundError(f"{json_path}: golden photo not found: {golden_path}")
 
+    markup_path = None
+    if data.get("markup_mask"):
+        markup_path = json_path.parent / data["markup_mask"]
+        if not markup_path.exists():
+            raise FileNotFoundError(f"{json_path}: markup mask not found: {markup_path}")
+
     compare_settings = data.get("compare_settings", {})
     unknown = set(compare_settings) - set(COMPARE_SETTING_KEYS)
     if unknown:
@@ -111,8 +119,10 @@ def load_product(json_path):
         json_path=json_path,
         pack=data.get("pack"),
         face=data.get("face"),
-        barcode=str(data["barcode"]) if data.get("barcode") is not None else None,
+        barcode=str(data["barcode"]) if data.get("barcode") else None,
+        label_code=str(data["label_code"]) if data.get("label_code") else None,
         golden_path=golden_path,
+        markup_path=markup_path,
         compare_settings=compare_settings,
     )
 

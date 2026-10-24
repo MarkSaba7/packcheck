@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackCheck artwork</title>
+<link rel="stylesheet" href="/static/packcheck.css">
+</head>
+<body>
+<main class="wide">
+  <header>
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <h1 data-t="page.artwork_title" data-t-title="page.artwork_title">Add an artwork</h1>
+  </header>
+  <div class="topline">
+    <a class="link-button" href="/" data-t="desk.home">Home</a>
+    <span id="signed-in" hidden><span data-t="login.signed_in_as">Signed in as</span> <b id="signed-in-name"></b>
+      <button type="button" id="sign-out" data-t="login.sign_out">Sign out</button></span>
+    <button type="button" data-language="en" aria-pressed="true">EN</button>
+    <button type="button" data-language="fr">FR</button>
+  </div>
+
+  <section id="login" hidden>
+    <h2 data-t="login.title">Sign in</h2>
+    <label for="login-name" data-t="login.name">Name</label>
+    <input id="login-name" type="text" autocomplete="username">
+    <label for="login-pin" data-t="login.pin">PIN</label>
+    <input id="login-pin" type="password" inputmode="numeric" autocomplete="current-password">
+    <p id="login-error" class="error-text" hidden></p>
+    <button class="button" id="login-button" type="button" data-t="login.button">Sign in</button>
+  </section>
+
+  <p data-t="proofs.intro"></p>
+  <input id="proof-file" type="file" accept=".pdf,image/png,image/jpeg">
+  <label for="proof-file" class="button" data-t="proofs.upload">Choose the document (PDF or scan)</label>
+  <p id="upload-message" hidden></p>
+
+  <section id="drawing" hidden>
+    <!-- The person draws the FRONT first, then the BACK: a scan always needs both, so the
+         artwork is not saved until both are drawn. Each box is kept as FRACTIONS of the
+         sheet, like the zone editor. Zoom makes the canvas wider than the page so the trim
+         line can be hit exactly; the box around it scrolls. -->
+    <p class="status-line" id="draw-step"></p>
+    <label for="zoom" data-t="proofs.zoom">Zoom</label>
+    <select id="zoom"><option value="1">100%</option><option value="2">200%</option><option value="3">300%</option></select>
+    <div class="editor scroll"><canvas id="canvas"></canvas></div>
+    <div class="actions"><button class="button small secondary" id="redraw" type="button" data-t="proofs.redraw">Draw again</button></div>
+
+    <label for="name" data-t="proofs.name">Artwork name</label>
+    <input id="name" type="text">
+    <label for="pack" data-t="proofs.pack">Product code</label>
+    <input id="pack" type="text">
+    <label for="label-code" data-t="proofs.label_code">Label code (optional)</label>
+    <input id="label-code" type="text">
+    <label for="barcode" data-t="proofs.barcode">Barcode (optional)</label>
+    <input id="barcode" type="text" inputmode="numeric">
+    <input id="barcode-photo" type="file" accept="image/*" capture="environment">
+    <label for="barcode-photo" class="button secondary" data-t="proofs.scan_barcode">Scan the barcode with a photo</label>
+    <p id="barcode-message" hidden></p>
+
+    <button class="button" id="create" type="button" disabled data-t="proofs.create">Add to the database</button>
+    <p id="message" hidden></p>
+    <button class="button secondary" id="create-anyway" type="button" hidden data-t="proofs.create_anyway">It is a different artwork: add it anyway</button>
+    <ul id="created"></ul>
+  </section>
+</main>
+
+<script src="/static/common.js"></script>
+<script>
+  const Artwork = { id: null, faces: {}, image: new Image(), drag: null };
+  const FACES = ["front", "back"];
+  const canvas = $("canvas");
+  const context = canvas.getContext("2d");
+
+  $("proof-file").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (!mayAct()) { say($("upload-message"), t("error.not_signed_in"), true); return; }
+    say($("upload-message"), t("proofs.reading"), false);
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch("/api/proofs", { method: "POST", body: form });
+    const body = await response.json();
+    if (!response.ok) { say($("upload-message"), body.detail || t("error.generic"), true); return; }
+    Artwork.id = body.proof_id;
+    Artwork.faces = {};
+    Artwork.image.onload = () => {
+      canvas.width = Artwork.image.width; canvas.height = Artwork.image.height;
+      $("drawing").hidden = false; $("upload-message").hidden = true; $("created").innerHTML = "";
+      update(); draw();
+    };
+    Artwork.image.src = `/api/proofs/${Artwork.id}/sheet.png`;
+  });
+
+  /* Which face is drawn next: the front, then the back, then none. */
+  function nextFace() { return FACES.find((face) => !Artwork.faces[face]); }
+
+  function update() {
+    const face = nextFace();
+    $("draw-step").textContent = face ? t("proofs.draw_face", { face: t("r79.face." + face) }) : t("proofs.both_drawn");
+    $("draw-step").className = "status-line" + (face ? "" : " connected");
+    $("create").disabled = Boolean(face) || !$("pack").value.trim();
+  }
+
+  $("zoom").addEventListener("change", (event) => { canvas.style.width = `${event.target.value * 100}%`; draw(); });
+  $("redraw").addEventListener("click", () => { Artwork.faces = {}; update(); draw(); });
+  $("pack").addEventListener("input", update);
+
+  function draw() {
+    context.drawImage(Artwork.image, 0, 0);
+    const scale = canvas.width / canvas.getBoundingClientRect().width;
+    context.lineWidth = 2 * scale;
+    context.font = `bold ${22 * scale}px system-ui, sans-serif`;
+    context.strokeStyle = context.fillStyle = "#0089B6";
+    for (const [face, rect] of Object.entries(Artwork.faces)) {
+      const [x, y, w, h] = toPixels(rect);
+      context.strokeRect(x, y, w, h);
+      context.fillText(t("r79.face." + face).toUpperCase(), x + 4 * scale, y - 8 * scale);
+    }
+    if (Artwork.drag) {
+      const [x, y, w, h] = normalise(Artwork.drag);
+      context.setLineDash([8 * scale, 6 * scale]);
+      context.strokeRect(x, y, w, h);
+      context.setLineDash([]);
+    }
+  }
+
+  function toPixels([x, y, w, h]) { return [x * canvas.width, y * canvas.height, w * canvas.width, h * canvas.height]; }
+  function toFractions([x, y, w, h]) { return [x / canvas.width, y / canvas.height, w / canvas.width, h / canvas.height].map((v) => Math.round(v * 100000) / 100000); }
+  function normalise({ x0, y0, x1, y1 }) { return [Math.min(x0, x1), Math.min(y0, y1), Math.abs(x1 - x0), Math.abs(y1 - y0)]; }
+
+  function canvasPoint(event) {
+    const box = canvas.getBoundingClientRect();
+    return { x: (event.clientX - box.left) * canvas.width / box.width, y: (event.clientY - box.top) * canvas.height / box.height };
+  }
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!nextFace()) return;   // both faces drawn: "Draw again" to start over
+    const point = canvasPoint(event);
+    Artwork.drag = { x0: point.x, y0: point.y, x1: point.x, y1: point.y };
+    canvas.setPointerCapture(event.pointerId);
+  });
+  canvas.addEventListener("pointermove", (event) => {
+    if (!Artwork.drag) return;
+    const point = canvasPoint(event);
+    Artwork.drag.x1 = point.x; Artwork.drag.y1 = point.y;
+    draw();
+  });
+  canvas.addEventListener("pointerup", () => {
+    if (!Artwork.drag) return;
+    const rect = normalise(Artwork.drag);
+    Artwork.drag = null;
+    if (rect[2] >= 20 && rect[3] >= 20) Artwork.faces[nextFace()] = toFractions(rect);   // a tap is not a face
+    update(); draw();
+  });
+
+  /* The barcode: read from a photo by the server, then checked against the database. */
+  $("barcode-photo").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    event.target.value = "";
+    if (!file) return;
+    const form = new FormData();
+    form.append("photo", file);
+    const found = await (await fetch("/api/products/lookup", { method: "POST", body: form })).json();
+    if (!found.codes || !found.codes.length) { say($("barcode-message"), t("capture.barcode_unreadable"), true); return; }
+    $("barcode").value = found.codes[0];
+    if (found.products.length) say($("barcode-message"), t("proofs.barcode_used", { name: found.products[0].name }), true);
+    else say($("barcode-message"), t("proofs.barcode_read", { code: found.codes[0] }), false);
+  });
+
+  $("create").addEventListener("click", () => create(false));
+  $("create-anyway").addEventListener("click", () => create(true));
+
+  async function create(allowSimilar) {
+    if (!mayAct()) { say($("message"), t("error.not_signed_in"), true); return; }
+    $("create-anyway").hidden = true;
+    say($("message"), t("proofs.checking"), false);
+    const faces = FACES.map((face) => ({ face, rect: Artwork.faces[face] }));
+    const response = await fetch(`/api/proofs/${Artwork.id}/products`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pack: $("pack").value, name: $("name").value, label_code: $("label-code").value,
+                             barcode: $("barcode").value, faces, allow_similar: allowSimilar }),
+    });
+    const body = await response.json();
+    if (response.status === 409) {
+      // Already in the database. Only "it LOOKS the same" can be overruled by a person.
+      say($("message"), body.detail.message, true);
+      $("create-anyway").hidden = !body.detail.can_override;
+      return;
+    }
+    if (!response.ok) { say($("message"), body.detail || t("error.generic"), true); return; }
+    say($("message"), t("proofs.created"), false);
+    $("created").innerHTML = "";
+    for (const productId of body.product_ids) {
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.href = `/products/${encodeURIComponent(productId)}/zones`;
+      link.textContent = `${productId}: ${t("proofs.open_zones")}`;
+      item.append(link);
+      $("created").append(item);
+    }
+  }
+
+  function say(box, text, isError) {
+    box.textContent = text;
+    box.className = isError ? "error-text" : "ok-text";
+    box.hidden = false;
+  }
+
+  window.addEventListener("resize", draw);
+  document.addEventListener("languagechange", () => { if (Artwork.id) { update(); draw(); } });
+
+  (async () => {
+    await loadStrings();
+    wireLanguageButtons();
+    wireLogin();
+    await refreshLogin();
+  })();
+</script>
+</body>
+</html>

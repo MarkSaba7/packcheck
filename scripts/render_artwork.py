@@ -25,7 +25,8 @@ def main():
     parser = argparse.ArgumentParser(description="Render one page of a PDF to a PNG.")
     parser.add_argument("pdf", help="path to the artwork PDF (keep it in private/, which git ignores)")
     parser.add_argument("--page", type=int, default=1, help="page number, starting at 1")
-    parser.add_argument("--dpi", type=int, default=150, help="resolution; 150 is plenty for a whole face")
+    # 300, not 150: proofs are often scans stored at 300 dpi, and half of that blurs small print.
+    parser.add_argument("--dpi", type=int, default=300, help="resolution; 300 keeps the detail of a 300 dpi proof scan")
     parser.add_argument("--out", required=True, help="where to write the PNG")
     args = parser.parse_args()
 

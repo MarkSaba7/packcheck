@@ -42,12 +42,12 @@ every line to someone else.
 
 ```
 pip install -r requirements.txt
-python -m pytest                                   # 37 tests, about a minute
+python -m pytest                                   # 63 tests, about a minute and a half
 python -m packcheck.cli demo                       # (re)create the synthetic demo product (front + back)
 python -m packcheck.cli inspect --product products/demo-dog-food-front/product.json \
                                 --photo products/demo-dog-food-front/photo_bad.jpg
 python -m packcheck.cli add-user "Name" --pin 1234 # from then on the pages require a login
-uvicorn packcheck.server:app --host 0.0.0.0 --port 8000    # phone: http://<pc-ip>:8000  desk: /desk  report: /report?day=YYYY-MM-DD
+uvicorn packcheck.server:app --host 0.0.0.0 --port 8000    # open http://localhost:8000: Start scanning (/desk) / Add an artwork (/artworks/new)
 python scripts/render_artwork.py private/artwork.pdf --out private/sheet.png
 python scripts/evaluate.py --product products/<id>/product.json --photos private/photos/<id>/   # milestone 1
 python scripts/export_decisions.py --out private/decisions.csv                                  # milestone 6 data
@@ -60,8 +60,11 @@ the Windows Store Python or a `.venv` made from it (see README quick start).
 ## Architecture
 
 ```
-phone page (web/index.html) ---photo---> API (server.py) <--- desk page (web/desk.html) polls by session
-zone editor (web/zones.html) --zones-->     |               <--- report (report.py) reads storage
+home (web/home.html): 1 Start scanning -> desk (web/desk.html: QR, polls the session) <-- phone (web/phone.html: front + back)
+                      2 Add an artwork -> web/artwork.html -> proof.py (cut faces, markup, duplicate check) -> products/
+phone ---front + back---> POST /api/packs/inspect (server.py) -> identify_pack (both photos together) -> 2x inspect_photo
+desk / history (web/history.html) ---> /report/pack/<id>: r79.py (fill_form decides, render_form draws) reads storage
+zone editor (web/zones.html) --zones-->     |
                           (no product_id?)  |
                            identify.py -----+---> pipeline.inspect_photo()
                        "which product IS         |
@@ -78,6 +81,12 @@ zone editor (web/zones.html) --zones-->     |               <--- report (report.
 - A **product** is ONE flat face of one package: `products/<id>/product.json` + `reference.png`.
   `pack` + `face` group faces; `barcode` only picks the product; `golden_photo` is the colour
   reference; `compare_settings` are per-product thresholds.
+- **A scan is one physical pack = front + back** (same `pack_id` on both inspections, front
+  saved first). Its result is the company's **R79 form** (`r79.py`), one per scan.
+- **Products usually come from a printer's proof** (`proof.py`, page `/artworks/new`): one sheet
+  with every face, bleed, trim/seal lines, copy-safety box, labels, signatures, often a
+  scan. A person draws each face along its trim line; `markup_mask` (markup.png) marks the
+  proof markup found in the face's margin, which the pipeline never compares.
 - **Zones** (fractions of the reference, `[x, y, w, h]`): `variable` = printed per batch
   (dates, lot codes): never compared, cut out and read; `expect` rules say what must be there.
   `ignore` = never reported.
@@ -116,6 +125,21 @@ zone editor (web/zones.html) --zones-->     |               <--- report (report.
   `html.escape` instead of a template engine, a random login ticket in a cookie instead of
   a signing library.** Each is the plainest thing that works at this size.
 - **Python** because OpenCV and the OCR ecosystem live there.
+- **The R79's 12 points are not judged one by one** - nothing here can read "legible". A
+  point is ticked when both faces match the approved artwork AND every flagged difference
+  was dismissed by a person; crossed when a person confirmed a difference and chose that
+  point (`decisions.checklist_item`); blank + "pending" otherwise. UPC also compares the
+  barcode read in the photos (not reading it is never a cross). Same never-guess rule.
+- **The pack is identified from BOTH photos** (`identify.identify_pack`, inliers summed):
+  the 2 mm and 4 mm Hagen pouches share a back almost word for word; their fronts decide.
+- **"Already in the database"** = same product code, same barcode, or >= 35% of the
+  smaller reference's points agree (`proof.SAME_ARTWORK_SHARE`, measured: same proof twice
+  42-96%, 2 mm vs 4 mm 6-23%). Only the visual check can be overruled by a person.
+- **Proof faces are drawn by a person, not detected.** On the real Hagen / Rootree proofs the
+  magenta trim outline is complete on the white front but almost invisible on the blue
+  back: detection would work on half the faces (never-guess rule). Proof markup IS found
+  automatically, by colour + thin-or-small + "outside the copy-safety box": colour alone
+  would also mask green print (the demo's own green text is the proof labels' green).
 
 ## Known limits (do not hide these)
 
@@ -140,6 +164,12 @@ zone editor (web/zones.html) --zones-->     |               <--- report (report.
   preprocessing; until then they come back as "check by hand". Pipeline messages are English only.
 - The barcode detector is tested with QR codes only (OpenCV cannot generate EAN barcodes for the demo).
 - No trained model, no HTTPS out of the box (see `docs/DEPLOYMENT.md`).
+- Proofs: handwritten approval ticks are grey like print and are NOT masked; they need
+  ignore zones (or the printer's unsigned PDF). Markup in other colours or inside the
+  copy-safety box is not found. A scanned proof's colours are not the print's colours.
+- Small print: references are compared at 1400 px. A single changed character of small text
+  can fall under `strong_min_pixels` when the artwork is small in that frame (tests/test_proof.py
+  uses a missing icon for this reason). "2 mm" vs "4 mm" on the Hagen fronts IS caught.
 
 ## Where things are
 
@@ -151,11 +181,13 @@ zone editor (web/zones.html) --zones-->     |               <--- report (report.
 | `packcheck/reading.py` | Step 3: OCR of variable zones and the date / code rules |
 | `packcheck/pipeline.py` | One inspection end to end; golden photo; writes `runs/...`; drawing helpers |
 | `packcheck/product.py` | `product.json` loading and validation, zones, rules, `save_zones` |
+| `packcheck/proof.py` | Proof sheet -> products: render at 300 dpi, cut each face, find proof markup, duplicates |
+| `packcheck/r79.py` | The R79 form for one scanned pack: `fill_form` (what each box says), `render_form` (the page) |
 | `packcheck/storage.py` | SQLite: inspections, differences, decisions, readings, sessions, users, logins |
 | `packcheck/report.py` | The printable HTML report |
 | `packcheck/codes.py` | QR code generation, barcode / QR decoding (OpenCV) |
 | `packcheck/demo.py` | Synthetic artwork (front + back) and simulated photos with planted defects |
-| `packcheck/server.py`, `packcheck/web/` | API and the pages (phone, desk, zones editor), strings.json |
+| `packcheck/server.py`, `packcheck/web/` | API and the pages (home, desk, phone, history, artwork, zones editor), strings.json |
 | `scripts/` | render_artwork.py, evaluate.py, export_decisions.py, prune_runs.py |
 | `tests/` | end-to-end tests on the demo, one file per milestone |
 | `docs/ROADMAP.md` | Milestones, each with a definition of done and its current status |

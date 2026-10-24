@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackCheck</title>
+<link rel="stylesheet" href="/static/packcheck.css">
+</head>
+<body>
+<main>
+  <header>
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <h1 data-t="page.phone_title" data-t-title="page.phone_title">Scan a pack</h1>
+  </header>
+  <div class="topline">
+    <span id="signed-in" hidden><span data-t="login.signed_in_as">Signed in as</span> <b id="signed-in-name"></b>
+      <button type="button" id="sign-out" data-t="login.sign_out">Sign out</button></span>
+    <button type="button" data-language="en" aria-pressed="true">EN</button>
+    <button type="button" data-language="fr">FR</button>
+  </div>
+
+  <p id="no-session" class="verdict retake" hidden data-t="phone.no_session"></p>
+
+  <section id="login" hidden>
+    <h2 data-t="login.title">Sign in</h2>
+    <label for="login-name" data-t="login.name">Name</label>
+    <input id="login-name" type="text" autocomplete="username">
+    <label for="login-pin" data-t="login.pin">PIN</label>
+    <input id="login-pin" type="password" inputmode="numeric" autocomplete="current-password">
+    <p id="login-error" class="error-text" hidden></p>
+    <button class="button" id="login-button" type="button" data-t="login.button">Sign in</button>
+  </section>
+
+  <!-- One scan = one pack = two photos. Nothing is sent until both are taken, so the
+       computer always gets a front AND a back to check together. capture="environment"
+       opens the back camera on phones; on a computer it is a file picker. -->
+  <section id="capture" hidden>
+    <p class="hint" data-t="phone.connected"></p>
+    <div id="inspector-block">
+      <label for="inspector" data-t="capture.inspector">Your name</label>
+      <input id="inspector" type="text" autocomplete="off">
+    </div>
+    <div class="slots">
+      <div class="slot" id="slot-front">
+        <img alt="">
+        <input id="photo-front" type="file" accept="image/*" capture="environment">
+        <label for="photo-front" class="button" data-t="phone.take_front">Photograph the FRONT</label>
+      </div>
+      <div class="slot" id="slot-back">
+        <img alt="">
+        <input id="photo-back" type="file" accept="image/*" capture="environment">
+        <label for="photo-back" class="button" data-t="phone.take_back">Photograph the BACK</label>
+      </div>
+    </div>
+    <p class="hint" data-t="capture.hint"></p>
+    <button class="button" id="send" type="button" disabled data-t="phone.send">Send</button>
+    <p class="hint" id="need-both" data-t="phone.need_both"></p>
+  </section>
+
+  <div id="checking" hidden role="status">
+    <svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="20" cy="20" r="11"/><path d="M20 2v36M2 20h36"/>
+    </svg>
+    <span data-t="phone.sending">Sending and checking…</span>
+  </div>
+
+  <!-- When the photos do not point to exactly one artwork: never guess, ask. The same two
+       photos are sent again with the artwork the worker tapped. -->
+  <section id="chooser" hidden>
+    <p class="verdict retake" id="chooser-title"></p>
+    <div class="candidates" id="candidates"></div>
+  </section>
+
+  <section id="sent" hidden>
+    <p class="verdict ok" id="sent-text" data-t="phone.sent"></p>
+    <button class="button" id="next" type="button" data-t="phone.next">Scan another pack</button>
+  </section>
+</main>
+
+<script src="/static/common.js"></script>
+<script>
+  const Phone = { sessionId: new URLSearchParams(location.search).get("session"), photos: { front: null, back: null } };
+
+  for (const face of ["front", "back"]) {
+    $(`photo-${face}`).addEventListener("change", (event) => {
+      const file = event.target.files[0];
+      event.target.value = "";
+      if (!file) return;
+      Phone.photos[face] = file;
+      const slot = $(`slot-${face}`);
+      slot.querySelector("img").src = URL.createObjectURL(file);
+      slot.classList.add("done");
+      slot.querySelector("label").textContent = t(`phone.retake_${face}`);
+      updateSend();
+    });
+  }
+
+  function updateSend() {
+    const ready = Boolean(Phone.photos.front && Phone.photos.back);
+    $("send").disabled = !ready;
+    $("need-both").hidden = ready;
+  }
+
+  $("send").addEventListener("click", () => send(null));
+
+  async function send(pack) {
+    if (!mayAct()) { alert(t("error.not_signed_in")); return; }
+    remember("inspector", $("inspector").value);
+    show("checking");
+    const form = new FormData();
+    form.append("front", Phone.photos.front);
+    form.append("back", Phone.photos.back);
+    form.append("session_id", Phone.sessionId);
+    form.append("inspector", $("inspector").value);
+    if (pack) form.append("pack", pack);
+    try {
+      const response = await fetch("/api/packs/inspect", { method: "POST", body: form });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || t("error.generic"));
+      if (body.status === "identify_ambiguous" || body.status === "identify_failed") return showChooser(body);
+      show("sent");
+    } catch (error) {
+      alert(error.message);
+      show("capture");
+    }
+  }
+
+  function showChooser(body) {
+    $("chooser-title").textContent = body.candidates.length ? t("phone.ambiguous") : t("phone.failed");
+    $("candidates").innerHTML = "";
+    for (const candidate of body.candidates) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "button";
+      button.textContent = candidate.name;
+      button.addEventListener("click", () => send(candidate.pack));
+      $("candidates").append(button);
+    }
+    const retake = document.createElement("button");
+    retake.type = "button";
+    retake.className = "button secondary";
+    retake.textContent = t("chooser.retake");
+    retake.addEventListener("click", () => show("capture"));
+    $("candidates").append(retake);
+    show("chooser");
+  }
+
+  function show(section) {
+    for (const id of ["capture", "checking", "chooser", "sent"]) $(id).hidden = id !== section;
+    window.scrollTo(0, 0);
+  }
+
+  $("next").addEventListener("click", () => {
+    Phone.photos = { front: null, back: null };
+    for (const face of ["front", "back"]) {
+      const slot = $(`slot-${face}`);
+      slot.querySelector("img").removeAttribute("src");
+      slot.classList.remove("done");
+      slot.querySelector("label").textContent = t(`phone.take_${face}`);
+    }
+    updateSend();
+    show("capture");
+  });
+
+  document.addEventListener("loginchange", () => {
+    $("inspector-block").hidden = Boolean(Login.user);   // the login already says who you are
+  });
+
+  (async () => {
+    await loadStrings();
+    wireLanguageButtons();
+    wireLogin();
+    $("inspector").value = recall("inspector");
+    await refreshLogin();
+    if (!Phone.sessionId) { $("no-session").hidden = false; return; }
+    // Tell the computer this phone is here: its screen switches from the QR code to "connected".
+    const response = await fetch(`/api/sessions/${encodeURIComponent(Phone.sessionId)}/connect`, { method: "POST" });
+    if (!response.ok) { $("no-session").hidden = false; return; }
+    show("capture");
+    updateSend();
+  })();
+</script>
+</body>
+</html>

@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS inspections (
     work_order      TEXT,                     -- typed by the worker; groups packs for one report
     inspector       TEXT,                     -- who took the photo
     pack_id         TEXT,                     -- groups the faces (front, back) of one physical pack
-    session_id      TEXT                      -- QR hand-off session, if the phone was paired to a desk
+    session_id      TEXT,                     -- QR hand-off session, if the phone was paired to a desk
+    codes_read      TEXT                      -- JSON list of the barcodes / QR codes read in the photo
 );
 CREATE INDEX IF NOT EXISTS inspections_day ON inspections(day);
 CREATE INDEX IF NOT EXISTS inspections_work_order ON inspections(work_order);
@@ -66,7 +67,8 @@ CREATE TABLE IF NOT EXISTS decisions (
     decision      TEXT NOT NULL CHECK (decision IN ('confirm', 'dismiss')),
     note          TEXT,
     decided_by    TEXT,
-    decided_at    TEXT NOT NULL
+    decided_at    TEXT NOT NULL,
+    checklist_item TEXT                       -- which R79 point a confirmed difference breaks (r79.CHECKLIST)
 );
 
 CREATE TABLE IF NOT EXISTS readings (
@@ -80,8 +82,10 @@ CREATE TABLE IF NOT EXISTS readings (
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
-    id         TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL
+    id           TEXT PRIMARY KEY,
+    created_at   TEXT NOT NULL,
+    connected_at TEXT,                        -- when a phone opened the session's link
+    checking     INTEGER NOT NULL DEFAULT 0   -- 1 while the phone's photos are being checked
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -98,6 +102,15 @@ CREATE TABLE IF NOT EXISTS logins (
 );
 """
 
+# Columns added after the first version of the schema. CREATE TABLE IF NOT EXISTS does not
+# touch a table that already exists, so a database made by an older version gets them here.
+ADDED_COLUMNS = [
+    ("inspections", "codes_read", "TEXT"),
+    ("decisions", "checklist_item", "TEXT"),
+    ("sessions", "connected_at", "TEXT"),
+    ("sessions", "checking", "INTEGER NOT NULL DEFAULT 0"),
+]
+
 
 def connect(database_path):
     """Open (and if needed create) the database file. Returns a connection whose rows behave like dicts."""
@@ -108,6 +121,10 @@ def connect(database_path):
     connection = sqlite3.connect(str(database_path), check_same_thread=False)
     connection.row_factory = sqlite3.Row
     connection.executescript(SCHEMA)
+    for table, column, kind in ADDED_COLUMNS:
+        existing = [row["name"] for row in connection.execute(f"PRAGMA table_info({table})")]
+        if column not in existing:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
     return connection
 
 
@@ -121,12 +138,13 @@ def save_inspection(connection, result, run, work_order=None, inspector=None, pa
     """Store one pipeline result. Returns the inspection id and writes each difference's
     database id into result["differences"][i]["id"], so the page can post decisions."""
     created_at = result["created_at"]
+    codes_read = json.dumps(result["codes_read"]) if "codes_read" in result else None
     cursor = connection.execute(
         "INSERT INTO inspections (run, created_at, day, product_id, product_name, status, readings_status,"
-        " message, work_order, inspector, pack_id, session_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        " message, work_order, inspector, pack_id, session_id, codes_read) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (run, created_at, created_at[:10], result["product_id"], result["product_name"], result["status"],
          result.get("readings_status"), result["message"], work_order or None, inspector or None,
-         pack_id or None, session_id or None),
+         pack_id or None, session_id or None, codes_read),
     )
     inspection_id = cursor.lastrowid
 
@@ -163,13 +181,21 @@ def _int_to_valid(value):
     return None if value is None else bool(value)
 
 
-def list_inspections(connection, day=None, work_order=None, session_id=None, after_id=None, pack_id=None):
+def list_inspections(connection, day=None, work_order=None, session_id=None, after_id=None, pack_id=None, since_day=None,
+                     product_ids=None):
     """Inspections matching the filters, oldest first, each with its differences (and their
-    latest decision) and readings attached. Used by the report page and the desk screen."""
+    latest decision) and readings attached. Used by the report pages and the desk screen.
+    `since_day` (YYYY-MM-DD) keeps that day and later: the history's "this week"."""
     conditions, values = [], []
     if day:
         conditions.append("day = ?")
         values.append(day)
+    if since_day:
+        conditions.append("day >= ?")
+        values.append(since_day)
+    if product_ids is not None:
+        conditions.append(f"product_id IN ({','.join('?' * len(product_ids))})" if product_ids else "0")
+        values.extend(product_ids)
     if work_order:
         conditions.append("work_order = ?")
         values.append(work_order)
@@ -187,6 +213,23 @@ def list_inspections(connection, day=None, work_order=None, session_id=None, aft
     return [_inspection_with_details(connection, row) for row in rows]
 
 
+def count_earlier_inspections(connection, product_ids, before_id):
+    """How many inspections of these products happened before inspection `before_id`.
+    Zero means this delivery is the artwork's first ("Première réception" on the R79)."""
+    if not product_ids:
+        return 0
+    marks = ",".join("?" * len(product_ids))
+    return connection.execute(f"SELECT COUNT(*) FROM inspections WHERE product_id IN ({marks}) AND id < ?",
+                              (*product_ids, before_id)).fetchone()[0]
+
+
+def list_pack_ids(connection, since_day):
+    """The packs inspected since that day, newest first (inspections without a pack are left out)."""
+    rows = connection.execute("SELECT pack_id, MIN(id) AS first FROM inspections WHERE pack_id IS NOT NULL AND day >= ?"
+                              " GROUP BY pack_id ORDER BY first DESC", (since_day,))
+    return [row["pack_id"] for row in rows]
+
+
 def get_inspection(connection, inspection_id):
     row = connection.execute("SELECT * FROM inspections WHERE id = ?", (inspection_id,)).fetchone()
     return _inspection_with_details(connection, row) if row else None
@@ -194,6 +237,7 @@ def get_inspection(connection, inspection_id):
 
 def _inspection_with_details(connection, row):
     inspection = dict(row)
+    inspection["codes_read"] = json.loads(inspection["codes_read"]) if inspection.get("codes_read") else None
     inspection["differences"] = []
     for difference_row in connection.execute("SELECT * FROM differences WHERE inspection_id = ? ORDER BY number", (row["id"],)):
         difference = dict(difference_row)
@@ -210,17 +254,18 @@ def _inspection_with_details(connection, row):
 
 # ------------------------------------------------------------------ decisions
 
-def save_decision(connection, difference_id, decision, note=None, decided_by=None):
+def save_decision(connection, difference_id, decision, note=None, decided_by=None, checklist_item=None):
     """Record what a worker decided about one box. Every decision is kept (an audit trail);
-    the LATEST one is what reports show."""
+    the LATEST one is what reports show. `checklist_item` says which R79 point a confirmed
+    difference breaks (a key of r79.CHECKLIST), so the form can mark that point."""
     if decision not in ("confirm", "dismiss"):
         raise ValueError(f"decision must be 'confirm' or 'dismiss', got {decision!r}")
     exists = connection.execute("SELECT 1 FROM differences WHERE id = ?", (difference_id,)).fetchone()
     if not exists:
         raise KeyError(f"no difference with id {difference_id}")
     connection.execute(
-        "INSERT INTO decisions (difference_id, decision, note, decided_by, decided_at) VALUES (?,?,?,?,?)",
-        (difference_id, decision, note or None, decided_by or None, _now()),
+        "INSERT INTO decisions (difference_id, decision, note, decided_by, decided_at, checklist_item) VALUES (?,?,?,?,?,?)",
+        (difference_id, decision, note or None, decided_by or None, _now(), checklist_item if decision == "confirm" else None),
     )
     connection.commit()
     return latest_decision(connection, difference_id)
@@ -258,6 +303,23 @@ def create_session(connection):
 
 def session_exists(connection, session_id):
     return connection.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone() is not None
+
+
+def get_session(connection, session_id):
+    """{id, created_at, connected_at, checking} or None. The desk polls it to know when the
+    phone has opened the link and when photos are being checked."""
+    row = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def mark_session_connected(connection, session_id):
+    connection.execute("UPDATE sessions SET connected_at = ? WHERE id = ?", (_now(), session_id))
+    connection.commit()
+
+
+def set_session_checking(connection, session_id, checking):
+    connection.execute("UPDATE sessions SET checking = ? WHERE id = ?", (int(bool(checking)), session_id))
+    connection.commit()
 
 
 # ---------------------------------------------------------------- users, login

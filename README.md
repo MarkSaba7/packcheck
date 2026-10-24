@@ -1,10 +1,11 @@
 # PackCheck
 
-Photograph a package with a phone; PackCheck compares the photo with the approved artwork
-and shows what differs: changed text, missing elements, colour shifts. Dates and lot codes,
-which legitimately change on every batch, are read instead of compared and checked against
-the product's rules. Every inspection is stored; a printable report collects a day or a
-work order.
+Photograph the front and back of a delivered pack with a phone; PackCheck finds which
+approved artwork it is, compares both faces with it and shows what differs on the computer
+screen: changed text, missing elements, colour shifts. Each scan fills in the company's
+**R79 form** ("Validation des matériaux imprimés à la réception"), ready to view or print.
+Dates and lot codes, which legitimately change on every batch, are read instead of
+compared and checked against the product's rules.
 
 Milestones 0 to 7 of [docs/ROADMAP.md](docs/ROADMAP.md) are built and tested on a synthetic
 demo product. What is NOT done is everything that needs the company's real artwork and
@@ -19,7 +20,7 @@ Python 3.10 or newer.
 python -m venv .venv
 .venv\Scripts\activate            # Windows      (macOS / Linux: source .venv/bin/activate)
 pip install -r requirements.txt
-python -m pytest                  # 37 tests, about a minute (the first run downloads nothing: OCR models ship with the package)
+python -m pytest                  # 63 tests, about a minute and a half (the first run downloads nothing: OCR models ship with the package)
 ```
 
 Run an inspection from the command line:
@@ -31,26 +32,50 @@ python -m packcheck.cli inspect --product products/demo-dog-food-front/product.j
 It prints 3 differences, the date and lot it read, and a folder in `runs/`. Open
 `comparison.jpg` in that folder. Try `photo_good.jpg` too: it must report none.
 
-Run it from your phone:
+Run the app:
 
 ```
 uvicorn packcheck.server:app --host 0.0.0.0 --port 8000
 ```
 
-Find your computer's IP address (`ipconfig` on Windows, `ifconfig` on macOS / Linux), put
-the phone on the same Wi-Fi and open `http://<that-ip>:8000`. No phone handy? Open
-`http://localhost:8000` on the computer and choose `photo_bad.jpg` as the "photo".
-For a first real-camera test, display `products/demo-dog-food-front/reference.png` full
-screen on a monitor and photograph it with the phone.
+Open `http://localhost:8000` on the computer and click **Start scanning**. A QR code
+appears: scan it with a phone on the same Wi-Fi (if the phone's page never loads, see the
+Windows Firewall note in `docs/DEPLOYMENT.md`). The computer says "phone connected"; on the
+phone, photograph the front, then the back, and press Send. The result appears on the
+computer, with **Scan another pack**, **See the report** and **Print the report**.
+To try it with the demo, photograph `products/demo-dog-food-front/reference.png` and
+`products/demo-dog-food-back/reference.png` shown full screen on a monitor.
+
+## How a scan works, from the worker's side
+
+1. **Home** (`/`): two buttons, **Start scanning** and **Add an artwork**.
+2. **Start scanning** (`/desk`, on the computer): a QR code; when the phone opens it, the
+   screen says "phone connected". The history of scans (today / this week / this month)
+   is one click away.
+3. **The phone** (`/phone`, opened from the QR code): one slot for the front, one for the
+   back; Send works only once both are taken. If the photos do not clearly point to one
+   artwork, the phone asks which one instead of guessing.
+4. **The result** (back on the computer): each face, its differences with close-ups.
+   For each difference: **Confirm** (and say which R79 point it breaks) or **Dismiss**.
+5. **The R79** (`/report/pack/<id>`): the company's form, filled in. A point is ticked
+   when both faces match the approved artwork and every flagged difference was dismissed
+   by a person; it is crossed when a confirmed difference was put on it; it stays blank,
+   with "pending" and the reason, while anything is still undecided. "Présence du code
+   UPC" also compares the barcode read in the photos with the artwork's, when it has one.
+   Page 2 is the evidence: both comparison images and every difference.
 
 ## The pages
 
 | URL | Who | What |
 |---|---|---|
-| `/` | worker with a phone | photograph the pack - the product is identified FROM the photo, no picker needed; if it is genuinely unclear which product it is, pick from the short list shown, search by name, or photograph the barcode; see the verdict, Confirm / Dismiss each difference |
-| `/desk` | a screen next to the packs | shows a QR code; the phone that scans it becomes that screen's camera and results appear on the screen |
-| `/report?day=2026-09-17` or `/report?work_order=WO-7` | supervisor | printable report: every pack, confirmed differences with close-ups, dates and lots read; "print to PDF" is the export |
+| `/` | everyone | home: Start scanning / Add an artwork / history |
+| `/desk` | the computer next to the packs | QR code, "phone connected", result of each scan, review, next scan / report |
+| `/phone?session=...` | the worker's phone | front + back photos, Send |
+| `/history?range=day\|week\|month` | supervisor | every scanned pack with its R79 verdict, View / Print |
+| `/report/pack/<id>` | supervisor | the R79 form of one scan (`&print=1` opens the print dialog, `&lang=en` in English) |
+| `/artworks/new` | whoever adds artworks | upload a proof, draw its front and back, name, product code, barcode; refuses an artwork already in the database |
 | `/products/<id>/zones` | whoever sets up products | draw the variable / ignore zones on the artwork instead of typing fractions |
+| `/report?day=2026-09-17` or `/report?work_order=WO-7` | supervisor | the older summary report of a whole day |
 
 Add `&lang=fr` to the report, or press FR on a page: all text lives in
 `packcheck/web/strings.json`.
@@ -101,6 +126,35 @@ Each module starts with a longer explanation of what it does and why.
 Company artwork and photos are confidential: keep them in `private/` and `products/`, which
 git ignores (only the demo product is tracked). Do not upload them anywhere.
 
+### From a printer's proof (the usual case)
+
+A proof is one sheet with every face side by side, plus bleed, trim and seal lines, a green
+copy-safety box with "8mm" labels, a title block and signatures (often a scan of the signed
+paper). None of that is on the real pack, so the proof cannot be used as-is.
+
+1. On the home page, click **Add an artwork** (`/artworks/new`). Upload the proof PDF (or a
+   PNG / JPEG scan). It is rendered at 300 dpi and kept in `private/proofs/`.
+2. Drag a box exactly along the **magenta trim line** of the front, then of the back (zoom
+   in to hit it). Type the artwork's name and product code (the item number); the label
+   code and the barcode (typed, or read from a photo of it) are optional.
+   "Add to the database" refuses an artwork that is already there: same product code,
+   same barcode, or the same artwork (35% or more of its details match - only this last
+   one can be overruled, for a lookalike that really is a different product). Otherwise it
+   writes `products/<code>-front/` and `products/<code>-back/`: `reference.png` (the face
+   inside the trim), `markup.png` and `product.json`.
+3. `markup.png` marks the proof markup that was found in the face's margin - magenta or
+   green, thin or small, outside the copy-safety box (see `proof.py`). Those pixels are
+   never compared. The zone editor shows them in pink.
+4. Open each face's zone editor (`/products/<id>/zones`) and draw:
+   - an **ignore** zone over each handwritten approval tick: they are grey like the print
+     and cannot be found automatically. Better still, ask the printer for the unsigned
+     print-ready PDF - then there are no ticks to cover, and the print is sharper.
+   - the **variable** zone where the date / lot is printed (on the Hagen pouches: the
+     white box at the bottom right of the back).
+5. Inspect a photo of a good pack, then go on with step 4 below.
+
+### From a plain artwork file
+
 1. Render the artwork: `python scripts/render_artwork.py private/artwork.pdf --out private/sheet.png`
 2. The sheet shows the whole unfolded pack. In any image editor, crop ONE face exactly along
    its fold / cut lines and save it as `products/<product_id>/reference.png`.
@@ -123,12 +177,24 @@ git ignores (only the demo product is tracked). Do not upload them anywhere.
 - A colour shift over most of the face looks the same as different lighting, so it is not
   detected. Reliable colour checking needs a fixed photo spot and a golden photo; the code
   supports the golden photo, the photo spot is furniture.
-- Only flat faces align well. Bags and curved cans will produce false alarms.
+- Only flat faces align well. Bags and curved cans will produce false alarms. Pouches lie
+  flat enough for a first try; their heat-sealed edges may need ignore zones.
+- From a proof: handwritten ticks are not found automatically (ignore zones, or get the
+  unsigned PDF); markup in other colours or inside the copy-safety box is not found either.
+  A scanned proof's colours went through a printer and a scanner: trust it for text and
+  layout, use a golden photo for colour.
+- Small print: every reference is shrunk to 1400 px on its longest side for comparing. On a
+  ~125 mm face that is still enough to catch "2 mm" vs "4 mm"; on a larger face, or one with a
+  wide blank margin, a single changed character of small text can fall under the thresholds.
 - OCR is tested on the demo's clean print only. Dot-matrix and inkjet codes will need
   preprocessing; until then they come back as "check by hand".
 - The barcode detector is tested with QR codes only (the demo has no real EAN barcode).
 - Auto-identify tries the photo against every product's reference, so it slows down as
   products are added (fine for tens; hundreds need a shortlist step first, see roadmap M6).
+- The R79 cannot judge "legible" by itself: its ticks mean "matches the approved artwork,
+  and a person reviewed every flagged difference". "Nouvelle version" is never ticked:
+  replacing an artwork with a new version is not built yet (add it under a new code).
+- A pack needs both a front and a back artwork to be scanned.
 - No trained model anywhere. `scripts/export_decisions.py` collects the Confirm / Dismiss
   decisions that a future false-alarm filter would learn from (milestone 6).
 - Pipeline messages (warnings, alignment errors) are English only; page text is translated.
@@ -136,7 +202,7 @@ git ignores (only the demo product is tracked). Do not upload them anywhere.
 ## Layout
 
 ```
-packcheck/        the code: identify, align, compare, reading, pipeline, product, storage, report, codes, demo, cli, server, web/
+packcheck/        the code: identify, align, compare, reading, pipeline, product, proof, storage, report, codes, demo, cli, server, web/
 products/         one folder per product; only the demo (front + back) is tracked by git
 private/          raw artwork, test photos, exports; ignored by git
 runs/             one folder per inspection; ignored by git

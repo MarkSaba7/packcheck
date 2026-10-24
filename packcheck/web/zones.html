@@ -33,6 +33,7 @@
 
   <p data-t="zones.intro"></p>
   <p class="hint" data-t="zones.draw_hint"></p>
+  <p class="hint" id="markup-hint" data-t="zones.markup_hint" hidden></p>
 
   <!-- The reference image is drawn on a canvas; zones are rectangles on top of it. Dragging
        draws a new one. Coordinates are kept as FRACTIONS of the image (like product.json),
@@ -47,7 +48,7 @@
 <script src="/static/common.js"></script>
 <script>
   const productId = decodeURIComponent(location.pathname.split("/")[2]);
-  const Editor = { product: null, zones: [], image: new Image(), selected: -1, drag: null };
+  const Editor = { product: null, zones: [], image: new Image(), markup: null, selected: -1, drag: null };
   const canvas = $("canvas");
   const context = canvas.getContext("2d");
   const COLOURS = { variable: "#0089B6", ignore: "#8A9AA6" };
@@ -58,11 +59,36 @@
     $("title").textContent = `${t("page.zones_title")}: ${Editor.product.name}`;
     Editor.image.onload = () => { canvas.width = Editor.image.width; canvas.height = Editor.image.height; draw(); };
     Editor.image.src = `/api/products/${encodeURIComponent(productId)}/reference.png`;
+    if (Editor.product.has_markup) loadMarkup();
     renderList();
+  }
+
+  /* A product made from a proof has a markup mask: white where the pipeline does not
+     compare. Turn it once into a see-through pink layer drawn over the artwork. */
+  function loadMarkup() {
+    const mask = new Image();
+    mask.onload = () => {
+      const layer = document.createElement("canvas");
+      layer.width = mask.width; layer.height = mask.height;
+      const layerContext = layer.getContext("2d");
+      layerContext.drawImage(mask, 0, 0);
+      const pixels = layerContext.getImageData(0, 0, layer.width, layer.height);
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        const isMarkup = pixels.data[i] > 127;
+        pixels.data[i] = 214; pixels.data[i + 1] = 0; pixels.data[i + 2] = 111;
+        pixels.data[i + 3] = isMarkup ? 140 : 0;
+      }
+      layerContext.putImageData(pixels, 0, 0);
+      Editor.markup = layer;
+      $("markup-hint").hidden = false;
+      draw();
+    };
+    mask.src = `/api/products/${encodeURIComponent(productId)}/markup.png`;
   }
 
   function draw() {
     context.drawImage(Editor.image, 0, 0);
+    if (Editor.markup) context.drawImage(Editor.markup, 0, 0, canvas.width, canvas.height);
     const scale = canvas.width / canvas.getBoundingClientRect().width;   // keep lines readable at any zoom
     context.lineWidth = 3 * scale;
     context.font = `${16 * scale}px system-ui, sans-serif`;

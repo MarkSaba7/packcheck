@@ -87,6 +87,77 @@ def identify_product(photo_bgr, products):
     ))
 
 
+@dataclass
+class PackCandidate:
+    pack: str
+    name: str
+    front: object          # the front face's Product
+    back: object           # the back face's Product
+    inliers: int           # front + back together
+
+
+@dataclass
+class PackResult:
+    candidates: list = field(default_factory=list)   # packs whose front AND back both matched, best first
+    pack: PackCandidate = None                         # set only when one pack clearly won
+    swapped: bool = False                              # the two photos were taken the other way round
+    message: str = ""
+
+
+def packs_with_front_and_back(products):
+    """{pack: (front product, back product)} for every pack that has both faces."""
+    faces = {}
+    for product in products:
+        if product.pack and product.face in ("front", "back"):
+            faces.setdefault(product.pack, {})[product.face] = product
+    return {pack: (both["front"], both["back"]) for pack, both in faces.items() if len(both) == 2}
+
+
+def identify_pack(front_bgr, back_bgr, products):
+    """Which PACK do these two photos show? The front photo is matched against each pack's
+    front, the back photo against its back, and a pack counts only if BOTH match.
+
+    Why both together: two packs of one range often share a back word for word (the 2 mm
+    and 4 mm Tropican pouches do), so a back photo alone cannot tell them apart. Their
+    fronts differ, and adding the two scores lets the front decide. Same never-guess rule
+    as identify_product: the winner must be MIN_MARGIN times ahead of the next pack.
+
+    If nothing matches, the photos are tried the other way round once: a worker putting the
+    back photo in the front slot is an easy slip, and a match that way round is not a guess.
+    """
+    front_features, back_features = extract_features(front_bgr), extract_features(back_bgr)
+    if front_features.descriptors is None or back_features.descriptors is None:
+        return PackResult(message="No usable detail found in a photo. Retake it in better light, closer, and in focus.")
+
+    packs = packs_with_front_and_back(products)
+    candidates = _pack_candidates(front_features, back_features, packs)
+    swapped = False
+    if not candidates:
+        candidates = _pack_candidates(back_features, front_features, packs)
+        swapped = bool(candidates)
+    if not candidates:
+        return PackResult(message="These photos do not match any artwork in the database. Retake them with the whole face "
+                                  "visible, or add the artwork first.")
+    if len(candidates) == 1 or candidates[0].inliers >= MIN_MARGIN * candidates[1].inliers:
+        return PackResult(candidates=candidates, pack=candidates[0], swapped=swapped)
+    return PackResult(candidates=candidates, swapped=swapped, message=(
+        f"{len(candidates)} artworks look like a possible match and none stands out clearly. Please pick the right one."
+    ))
+
+
+def _pack_candidates(front_features, back_features, packs):
+    candidates = []
+    for pack, (front, back) in packs.items():
+        front_match = match_features(front_features, _cached_reference_features(front))
+        if not front_match.ok:
+            continue
+        back_match = match_features(back_features, _cached_reference_features(back))
+        if back_match.ok:
+            name = front.name.removesuffix(" - front")
+            candidates.append(PackCandidate(pack, name, front, back, front_match.inliers + back_match.inliers))
+    return sorted(candidates, key=lambda candidate: candidate.inliers, reverse=True)
+
+
 def _cached_reference_features(product):
     """SIFT on a reference image takes ~100-300 ms; a reference does not change between
     inspections, so we compute it once per file and reuse it. Keyed by the resolved path
