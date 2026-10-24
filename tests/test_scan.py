@@ -4,6 +4,8 @@ All on the synthetic demo pack (front + back). The demo's photo_bad.jpg front ha
 planted differences; photo_good.jpg of each face has none.
 """
 
+import shutil
+
 import cv2
 import pytest
 from fastapi.testclient import TestClient
@@ -75,8 +77,11 @@ def test_a_scan_with_differences_goes_from_pending_to_refused(client, products_d
     assert pack["verdict"] == "pending" and pack["missing"] == [["r79.undecided", {"count": 3}]]
 
     differences = seen[0]["differences"]
-    client.post(f"/api/differences/{differences[0]['id']}/decisions", json={"decision": "dismiss"})
-    client.post(f"/api/differences/{differences[1]['id']}/decisions", json={"decision": "dismiss"})
+    # Sent exactly as desk.html sends them: empty note, null point. (Null once gave a 422.)
+    for difference in differences[:2]:
+        dismissed = client.post(f"/api/differences/{difference['id']}/decisions",
+                                json={"decision": "dismiss", "note": "", "checklist_item": None})
+        assert dismissed.status_code == 200, dismissed.text
     bad = client.post(f"/api/differences/{differences[2]['id']}/decisions",
                       json={"decision": "confirm", "note": "2.5 kg", "checklist_item": "net_weight"})
     assert bad.json()["checklist_item"] == "net_weight"
@@ -104,6 +109,32 @@ def test_a_clean_scan_is_accepted_and_only_the_first_is_a_first_reception(client
     history = client.get("/api/packs", params={"range": "week"}).json()
     assert [pack["pack_id"] for pack in history] == [second["pack_id"], first["pack_id"]]   # newest first
     assert client.get("/api/packs", params={"range": "year"}).status_code == 400
+
+
+def test_always_ignore_this_spot_adds_an_ignore_zone(products_dir, tmp_path):
+    # A copy of the demo: this test changes the artwork's zones, the shared demo must not change.
+    own_products = tmp_path / "products"
+    shutil.copytree(products_dir, own_products)
+    server.app.state.products_dir = own_products
+    server.app.state.runs_dir = tmp_path / "runs"
+    server.app.state.database_path = tmp_path / "test.sqlite"
+    with TestClient(server.app) as client:
+        scan = client.post("/api/packs/inspect", files=photos(own_products, front="photo_bad.jpg")).json()
+        first = scan["faces"][0]["differences"][0]
+
+        answer = client.post(f"/api/differences/{first['id']}/ignore-spot", json={"note": None}).json()   # as the desk sends it
+        assert answer["decision"]["decision"] == "dismiss" and answer["product_id"] == "demo-dog-food-front"
+        client.post(f"/api/differences/{first['id']}/ignore-spot")     # twice: still one zone
+        zones = [zone for zone in client.get("/api/products/demo-dog-food-front").json()["zones"] if zone["name"] == answer["zone"]]
+        assert len(zones) == 1 and zones[0]["kind"] == "ignore"
+        x, y, w, h = first["rect_fraction"]
+        zx, zy, zw, zh = zones[0]["rect"]
+        assert zx <= x and zy <= y and zx + zw >= x + w and zy + zh >= y + h   # covers the box, with a margin
+
+        # The same pack again: the ignored spot is no longer flagged, the other two still are.
+        again = client.post("/api/packs/inspect", files=photos(own_products, front="photo_bad.jpg")).json()
+        assert len(again["faces"][0]["differences"]) == 2
+        assert client.post("/api/differences/999999/ignore-spot").status_code == 404
 
 
 def test_photos_of_nothing_known_ask_instead_of_guessing(client, tmp_path):

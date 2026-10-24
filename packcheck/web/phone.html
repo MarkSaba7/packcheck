@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>PackCheck</title>
-<link rel="stylesheet" href="/static/packcheck.css?v=3">
+<link rel="stylesheet" href="/static/packcheck.css?v=4">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
@@ -58,6 +58,7 @@
     <div class="sticky-send">
       <button class="button block large" id="send" type="button" disabled data-t="phone.send">Send</button>
       <p class="hint" id="need-both" data-t="phone.need_both"></p>
+      <p class="hint" id="quality-hint" data-t="phone.quality.hint" hidden></p>
     </div>
   </section>
 
@@ -83,31 +84,66 @@
   </section>
 </main>
 
-<script src="/static/common.js?v=3"></script>
+<script src="/static/common.js?v=4"></script>
 <script>
-  const Phone = { sessionId: new URLSearchParams(location.search).get("session"), photos: { front: null, back: null } };
+  const Phone = { sessionId: new URLSearchParams(location.search).get("session"), photos: { front: null, back: null },
+                  problems: { front: [], back: [] } };   // what /api/photos/check found in each photo
 
   for (const face of ["front", "back"]) {
-    $(`photo-${face}`).addEventListener("change", (event) => {
+    $(`photo-${face}`).addEventListener("change", async (event) => {
       const file = event.target.files[0];
       event.target.value = "";
       if (!file) return;
       Phone.photos[face] = file;
+      Phone.problems[face] = [];
       const slot = $(`slot-${face}`);
       const img = slot.querySelector("img");
       img.src = URL.createObjectURL(file);
       img.hidden = false;
       slot.classList.add("done");
-      slot.querySelector(".slot-done").textContent = "✓ " + t("desk.face." + face) + " · " + t("phone.tap_retake");
+      slot.classList.remove("warn");
+      slot.querySelector(".slot-done").textContent = t("phone.quality.checking");
       slot.querySelector(".slot-done").hidden = false;
       updateSend();
+
+      // Check the photo now, while the pack is still in the worker's hands, so a blurry or
+      // dark one is retaken here instead of failing later on the computer.
+      const problems = await checkPhoto(file);
+      if (Phone.photos[face] !== file) return;   // retaken while checking: the newer photo's check wins
+      Phone.problems[face] = problems;
+      slot.classList.toggle("warn", problems.length > 0);
+      // Only the first problem is shown: the server lists the likely cause first (see photo_quality.py).
+      slot.querySelector(".slot-done").textContent = problems.length
+        ? t("phone.quality." + problems[0].code)
+        : "✓ " + t("desk.face." + face) + " · " + t("phone.tap_retake");
+      updateSend();
     });
+  }
+
+  async function checkPhoto(file) {
+    // The check only warns, so it must never stop a worker from sending: if it fails (no
+    // network, server error, a photo the server cannot read) the photo is treated as unchecked.
+    try {
+      const form = new FormData();
+      form.append("photo", file);
+      const response = await fetch("/api/photos/check", { method: "POST", body: form });
+      if (!response.ok) return [];
+      return (await response.json()).problems;
+    } catch (error) {
+      return [];
+    }
   }
 
   function updateSend() {
     const ready = Boolean(Phone.photos.front && Phone.photos.back);
     $("send").disabled = !ready;
     $("need-both").hidden = ready;
+    // A warned photo can still be sent (the limits are not tuned on real photos yet; the
+    // worker may judge it fine), but the button says so. data-t keeps it right if the language changes.
+    const warned = Phone.problems.front.length > 0 || Phone.problems.back.length > 0;
+    $("send").dataset.t = warned ? "phone.quality.send_anyway" : "phone.send";
+    $("send").textContent = t($("send").dataset.t);
+    $("quality-hint").hidden = !warned;
   }
 
   $("send").addEventListener("click", () => send(null));
@@ -161,12 +197,13 @@
 
   $("next").addEventListener("click", () => {
     Phone.photos = { front: null, back: null };
+    Phone.problems = { front: [], back: [] };
     for (const face of ["front", "back"]) {
       const slot = $(`slot-${face}`);
       slot.querySelector("img").hidden = true;
       slot.querySelector("img").removeAttribute("src");
       slot.querySelector(".slot-done").hidden = true;
-      slot.classList.remove("done");
+      slot.classList.remove("done", "warn");
     }
     updateSend();
     show("capture");

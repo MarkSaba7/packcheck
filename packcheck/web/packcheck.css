@@ -354,6 +354,7 @@ ol.differences li > span:last-child { flex: 1; min-width: 0; }
 .review-count { font-size: 0.875rem; font-weight: 600; color: var(--muted); }
 .decision-buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.875rem; }
 .diff-controls .decision-buttons .button { flex: 1 1 8rem; }
+.diff-controls .decision-buttons .ignore-spot { flex-basis: 100%; }   /* its own row, under Confirm / Dismiss */
 .decision { display: inline-block; margin-top: 0.625rem; font-weight: 700; font-size: 0.9375rem; }
 .decision.confirmed { color: var(--diff); } .decision.dismissed { color: var(--muted); }
 
@@ -377,6 +378,9 @@ ol.differences li > span:last-child { flex: 1; min-width: 0; }
   position: absolute; left: 0.5rem; right: 0.5rem; bottom: 0.5rem; padding: 0.5rem; border-radius: var(--radius-small);
   background: rgba(14, 33, 50, 0.78); color: #fff; font-weight: 700; font-size: 0.8125rem; line-height: 1.3;
 }
+/* The photo check found a problem (blurry, too dark, glare): the slot stands out so it gets retaken. */
+.slot.warn { border-color: var(--warn); }
+.slot.warn .slot-done { background: var(--warn); }
 .sticky-send { position: sticky; bottom: 0; margin: 1.25rem -1rem 0; padding: 0.875rem 1rem calc(0.875rem + env(safe-area-inset-bottom)); background: linear-gradient(to top, var(--bg) 70%, transparent); }
 .done-screen { text-align: center; padding: 2.5rem 1.5rem; }
 .done-screen .status-icon { width: 5rem; height: 5rem; margin: 0 auto 1rem; display: grid; place-items: center; border-radius: 50%; background: var(--ok-soft); color: var(--ok); }

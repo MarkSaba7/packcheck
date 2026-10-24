@@ -3,7 +3,9 @@
     python -m packcheck.cli demo
     python -m packcheck.cli inspect --product products/demo-dog-food-front/product.json --photo products/demo-dog-food-front/photo_bad.jpg
     python -m packcheck.cli add-user "Sam" --pin 1234        # from then on the pages ask for a login
+    python -m packcheck.cli add-user "Sam" --pin 5678        # same name again = change Sam's PIN (signs Sam out everywhere)
     python -m packcheck.cli users
+    python -m packcheck.cli remove-user "Sam"                # Sam can no longer sign in, and is signed out everywhere
 """
 
 import argparse
@@ -30,11 +32,14 @@ def main():
     inspect.add_argument("--photo", required=True, help="path to the photo")
     inspect.add_argument("--out", help="result folder (default: a new folder in runs/)")
 
-    add_user = commands.add_parser("add-user", help="create a user (once one exists, the pages require a login)")
+    add_user = commands.add_parser("add-user", help="create a user, or change an existing user's PIN (once one exists, the pages require a login)")
     add_user.add_argument("name")
     add_user.add_argument("--pin", help="at least 4 characters; asked for if omitted")
 
     commands.add_parser("users", help="list the users")
+
+    remove_user = commands.add_parser("remove-user", help="delete a user and sign them out everywhere")
+    remove_user.add_argument("name")
 
     args = parser.parse_args()
 
@@ -48,6 +53,17 @@ def main():
         with storage.connect(DATABASE_PATH) as connection:
             storage.add_user(connection, args.name, pin)
         print(f"User '{args.name}' saved. The pages now require a login.")
+        return
+
+    if args.command == "remove-user":
+        with storage.connect(DATABASE_PATH) as connection:
+            try:
+                removed = storage.remove_user(connection, args.name)
+            except ValueError as error:
+                raise SystemExit(f"Not removed: {error}")
+        if not removed:
+            raise SystemExit(f"No user called '{args.name}'. See: python -m packcheck.cli users")
+        print(f"User '{args.name}' removed and signed out everywhere.")
         return
 
     if args.command == "users":

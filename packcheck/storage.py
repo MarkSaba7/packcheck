@@ -271,6 +271,20 @@ def save_decision(connection, difference_id, decision, note=None, decided_by=Non
     return latest_decision(connection, difference_id)
 
 
+def get_difference(connection, difference_id):
+    """One difference with the product it was found on, or None. "Always ignore this spot"
+    needs both: where the box is (rect_fraction) and which artwork gets the ignore zone."""
+    row = connection.execute(
+        "SELECT differences.*, inspections.product_id FROM differences"
+        " JOIN inspections ON inspections.id = differences.inspection_id WHERE differences.id = ?", (difference_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    difference = dict(row)
+    difference["rect_fraction"] = json.loads(difference["rect_fraction"])
+    return difference
+
+
 def latest_decision(connection, difference_id):
     row = connection.execute(
         "SELECT * FROM decisions WHERE difference_id = ? ORDER BY id DESC LIMIT 1", (difference_id,)
@@ -339,6 +353,10 @@ def add_user(connection, name, pin):
         "INSERT OR REPLACE INTO users (name, pin_hash, salt, created_at) VALUES (?,?,?,?)",
         (name, _hash_pin(pin, salt), salt, _now()),
     )
+    # Running add-user again for an existing name is how a PIN is changed. A PIN is usually
+    # changed because someone else learned it, so every device signed in with the old one
+    # is signed out too.
+    connection.execute("DELETE FROM logins WHERE user_name = ?", (name,))
     connection.commit()
 
 
@@ -348,6 +366,21 @@ def _hash_pin(pin, salt):
 
 def list_users(connection):
     return [row["name"] for row in connection.execute("SELECT name FROM users ORDER BY name")]
+
+
+def remove_user(connection, name):
+    """Delete a user and sign out every device they are signed in on. Returns False if there
+    is no such user. Their past inspections and decisions keep their name: that is the audit trail."""
+    if name not in list_users(connection):
+        return False
+    if len(list_users(connection)) == 1:
+        # With no user left, login_required() is False and the pages open to anyone on the
+        # network. That must never happen by accident while removing someone.
+        raise ValueError("this is the last user: removing it would turn the login off. Add another user first.")
+    connection.execute("DELETE FROM logins WHERE user_name = ?", (name,))
+    connection.execute("DELETE FROM users WHERE name = ?", (name,))
+    connection.commit()
+    return True
 
 
 def login_required(connection):

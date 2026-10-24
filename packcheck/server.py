@@ -34,6 +34,8 @@ API
     POST /api/proofs/{id}/products        {pack, name, barcode?, label_code?, faces: [{face, rect}], allow_similar?}
                                           -> the front and back products (see proof.py); 409 if already known
     POST /api/codes  photo                the barcodes / QR codes readable in a photo
+    POST /api/photos/check  photo         {ok, problems}: blurry / too dark / too bright (photo_quality.py).
+                                          Only a warning for the phone page; /api/packs/inspect never uses it.
     PUT  /api/products/{id}/zones         save the zone list
     POST /api/products/lookup  photo      find products by the barcode / QR code in the photo
     POST /api/inspections  form           photo, product_id?, work_order?, inspector?, pack_id?, session_id?
@@ -50,6 +52,7 @@ API
     GET  /api/checklist                   the keys of the R79's 12 points (r79.CHECKLIST)
     GET  /api/inspections                 ?day= ?work_order= ?session= ?pack_id= ?after_id=
     POST /api/differences/{id}/decisions  {decision: confirm|dismiss, note?, checklist_item?}
+    POST /api/differences/{id}/ignore-spot {note?}: dismiss it AND add an ignore zone there to its artwork
     POST /api/sessions                    {session_id}: a new desk session
     GET  /api/sessions/{id}               {session_id, connected, checking}: the desk polls it
     POST /api/sessions/{id}/connect       the phone says it opened the session's link
@@ -82,6 +85,7 @@ from pydantic import BaseModel
 from . import proof, r79, storage
 from .codes import decode_codes, make_qr_png
 from .identify import identify_pack, identify_product, packs_with_front_and_back
+from .photo_quality import check_photo
 from .pipeline import inspect_photo, new_run_dir
 from .product import list_products, save_zones
 from .report import render_report
@@ -170,6 +174,11 @@ def find_product(product_id):
         if product.product_id == product_id:
             return product
     raise HTTPException(status_code=404, detail=f"Unknown product: {product_id}")
+
+
+def zone_entry(zone):
+    """A Zone as it is written in product.json and sent to the pages."""
+    return {"name": zone.name, "kind": zone.kind, "rect": list(zone.rect), "expect": zone.expect}
 
 
 def product_summary(product):
@@ -272,7 +281,7 @@ def get_products():
 @app.get("/api/products/{product_id}")
 def get_product(product_id: str):
     product = find_product(product_id)
-    zones = [{"name": zone.name, "kind": zone.kind, "rect": list(zone.rect), "expect": zone.expect} for zone in product.zones]
+    zones = [zone_entry(zone) for zone in product.zones]
     return {**product_summary(product), "zones": zones, "compare_settings": product.compare_settings,
             "has_golden_photo": product.golden_path is not None, "has_markup": product.markup_path is not None}
 
@@ -325,8 +334,8 @@ class ProofFace(BaseModel):
 class ProofProductsBody(BaseModel):
     pack: str                   # the product code, groups the faces: "80520S"
     name: str                   # "Hagen Tropican Lifetime 2 mm"
-    barcode: str = None         # typed, or read from a photo of the barcode (POST /api/codes)
-    label_code: str = None      # "#Code étiquette" on the R79, if the company uses one
+    barcode: str | None = None       # typed, or read from a photo of the barcode (POST /api/codes)
+    label_code: str | None = None    # "#Code étiquette" on the R79, if the company uses one
     faces: list[ProofFace]
     allow_similar: bool = False # a person checked: it only LOOKS like an existing artwork
 
@@ -356,6 +365,18 @@ async def read_codes(photo: UploadFile = File(...)):
     return {"codes": decode_codes(image)}
 
 
+@app.post("/api/photos/check")
+async def check_one_photo(photo: UploadFile = File(...)):
+    """Is this photo blurry, too dark or too bright? The phone asks right after each photo,
+    so a bad one is retaken on the spot. Only a warning: the limits are not tuned on real
+    photos yet, so the worker may still send it (see photo_quality.py)."""
+    image = cv2.imdecode(np.frombuffer(await read_upload(photo), np.uint8), cv2.IMREAD_COLOR)
+    if image is None:
+        raise HTTPException(status_code=400, detail="That file is not a photo the server can read.")
+    problems = check_photo(image)
+    return {"ok": not problems, "problems": problems}
+
+
 class ZonesBody(BaseModel):
     zones: list
 
@@ -367,7 +388,7 @@ def put_zones(product_id: str, body: ZonesBody, user=Depends(require_user)):
         saved = save_zones(product.json_path, body.zones)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
-    return {"zones": [{"name": zone.name, "kind": zone.kind, "rect": list(zone.rect), "expect": zone.expect} for zone in saved.zones]}
+    return {"zones": [zone_entry(zone) for zone in saved.zones]}
 
 
 @app.post("/api/products/lookup")
@@ -560,9 +581,11 @@ def get_checklist():
 
 class DecisionBody(BaseModel):
     decision: str      # "confirm" | "dismiss"
-    note: str = None
-    decided_by: str = None
-    checklist_item: str = None   # which R79 point a confirmed difference breaks
+    # "str | None", not "str = None": the pages send null for an empty field, and pydantic
+    # refuses null for a plain str (422) - which made Dismiss fail when no R79 point was chosen.
+    note: str | None = None
+    decided_by: str | None = None
+    checklist_item: str | None = None   # which R79 point a confirmed difference breaks
 
 
 @app.post("/api/differences/{difference_id}/decisions")
@@ -575,6 +598,46 @@ def post_decision(difference_id: int, body: DecisionBody, user=Depends(require_u
         raise HTTPException(status_code=400, detail=str(error))
     except KeyError:
         raise HTTPException(status_code=404, detail=f"No difference with id {difference_id}")
+
+
+# How much bigger than the flagged box the new ignore zone is, on each side, as a fraction of
+# the face. The next photo of the same artwork never lands on exactly the same pixels, so a
+# zone the exact size of today's box would let tomorrow's box stick out of it by a pixel.
+IGNORE_SPOT_MARGIN = 0.01
+
+
+class IgnoreSpotBody(BaseModel):
+    note: str | None = None
+
+
+@app.post("/api/differences/{difference_id}/ignore-spot")
+def ignore_spot(difference_id: int, body: IgnoreSpotBody = None, user=Depends(require_user), connection=Depends(database)):
+    """"Always ignore this spot": dismiss this difference AND add an ignore zone over it to the
+    artwork it was found on, so later scans of that artwork are not asked about it again.
+
+    Why: on real proofs most false alarms come back on every scan in the same place (the
+    approval ticks and signatures on the proof). Dismissing them one scan at a time would make
+    nobody look at the list. The zone is an ordinary "ignore" zone, so it shows up in the zone
+    editor (/products/<id>/zones), where a person can move or delete it.
+    The price: a real defect in that exact spot will not be flagged either. The desk asks
+    for confirmation and says so."""
+    difference = storage.get_difference(connection, difference_id)
+    if difference is None:
+        raise HTTPException(status_code=404, detail=f"No difference with id {difference_id}")
+    product = find_product(difference["product_id"])
+
+    name = f"ignored spot {difference_id}"
+    zones = [zone_entry(zone) for zone in product.zones]
+    if all(zone["name"] != name for zone in zones):   # clicked twice: one zone is enough
+        x, y, w, h = difference["rect_fraction"]
+        left, top = max(0.0, x - IGNORE_SPOT_MARGIN), max(0.0, y - IGNORE_SPOT_MARGIN)
+        right, bottom = min(1.0, x + w + IGNORE_SPOT_MARGIN), min(1.0, y + h + IGNORE_SPOT_MARGIN)
+        zones.append({"name": name, "kind": "ignore", "rect": [round(left, 4), round(top, 4), round(right - left, 4), round(bottom - top, 4)]})
+        save_zones(product.json_path, zones)
+
+    note = (body.note if body else None) or "Always ignore this spot (ignore zone added to the artwork)"
+    decision = storage.save_decision(connection, difference_id, "dismiss", note, user)
+    return {"decision": decision, "zone": name, "product_id": product.product_id}
 
 
 # ----------------------------------------------------------------- sessions

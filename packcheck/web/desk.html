@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PackCheck desk</title>
-<link rel="stylesheet" href="/static/packcheck.css?v=3">
+<link rel="stylesheet" href="/static/packcheck.css?v=4">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
@@ -113,7 +113,7 @@
   </section>
 </main>
 
-<script src="/static/common.js?v=3"></script>
+<script src="/static/common.js?v=4"></script>
 <script>
   const Desk = { sessionId: null, lastId: 0, timer: null, connected: false, packs: {}, shownPack: null, checklist: [] };
 
@@ -257,6 +257,14 @@
       button.addEventListener("click", () => decide(li, difference, decision));
       li.querySelector(".decision-buttons").append(button);
     }
+    // Dismiss, and never ask about this spot of this artwork again (an ignore zone is added).
+    const always = document.createElement("button");
+    always.type = "button";
+    always.className = "button small secondary ignore-spot";
+    always.textContent = t("differences.ignore_spot");
+    always.title = t("differences.ignore_spot_hint");
+    always.addEventListener("click", () => ignoreSpot(li, difference));
+    li.querySelector(".decision-buttons").append(always);
     // Already decided (the language changed and the result was drawn again): show it.
     if (difference.decision) {
       li.querySelector(".note").value = difference.decision.note || "";
@@ -275,6 +283,22 @@
     if (!response.ok) { alert(t("error.generic")); return; }
     difference.decision = await response.json();
     markDecided(li, decision);
+    li.closest(".face-card").updateCount();
+    await refreshVerdict();
+  }
+
+  async function ignoreSpot(li, difference) {
+    if (!mayAct()) { alert(t("error.not_signed_in")); return; }
+    // A real defect in this exact spot would not be flagged either: make the person say yes.
+    if (!confirm(t("differences.ignore_spot_confirm"))) return;
+    const response = await fetch(`/api/differences/${difference.id}/ignore-spot`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: li.querySelector(".note").value || null }),
+    });
+    if (!response.ok) { alert(t("error.generic")); return; }
+    difference.decision = (await response.json()).decision;
+    markDecided(li, "dismiss");
+    li.querySelector(".decision").textContent = "✓ " + t("differences.ignored_spot");
     li.closest(".face-card").updateCount();
     await refreshVerdict();
   }

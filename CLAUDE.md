@@ -42,7 +42,7 @@ every line to someone else.
 
 ```
 pip install -r requirements.txt
-python -m pytest                                   # 63 tests, about a minute and a half
+python -m pytest                                   # 74 tests, about three minutes
 python -m packcheck.cli demo                       # (re)create the synthetic demo product (front + back)
 python -m packcheck.cli inspect --product products/demo-dog-food-front/product.json \
                                 --photo products/demo-dog-food-front/photo_bad.jpg
@@ -52,7 +52,14 @@ python scripts/render_artwork.py private/artwork.pdf --out private/sheet.png
 python scripts/evaluate.py --product products/<id>/product.json --photos private/photos/<id>/   # milestone 1
 python scripts/export_decisions.py --out private/decisions.csv                                  # milestone 6 data
 python scripts/prune_runs.py --keep-days 90                                                     # retention
+python scripts/backup.py [--dest D:/backups] [--keep 30]           # one zip: db (sqlite backup API) + products/ + private/proofs/
+python scripts/backup.py --restore backups/<zip> --to <empty folder>
+python -m packcheck.cli users | remove-user NAME                    # add-user on an existing name = new PIN
+scripts/windows_setup.ps1 (elevated, on the COMPANY PC only)        # tasks: server at startup, nightly backup, weekly prune; firewall
 ```
+
+Never run `windows_setup.ps1` / `windows_uninstall.ps1` on the developer's laptop: they
+register Scheduled Tasks and a firewall rule.
 
 On this developer's machine `python` on PATH is an msys build without the packages; use
 the Windows Store Python or a `.venv` made from it (see README quick start).
@@ -138,6 +145,16 @@ zone editor (web/zones.html) --zones-->     |
 - **"Already in the database"** = same product code, same barcode, or >= 35% of the
   smaller reference's points agree (`proof.SAME_ARTWORK_SHARE`, measured: same proof twice
   42-96%, 2 mm vs 4 mm 6-23%). Only the visual check can be overruled by a person.
+- **"Always ignore this spot"** (desk, `POST /api/differences/<id>/ignore-spot`) dismisses the
+  difference AND writes an ordinary `ignore` zone (the box + `server.IGNORE_SPOT_MARGIN`)
+  into that face's product.json. Recurring false alarms (proof ticks) are taught away in
+  one click instead of dismissed every scan; the desk asks for confirmation because a real
+  defect in that spot is then hidden too. Removable in the zone editor.
+- **The phone's photo check only warns** (`photo_quality.py`, `POST /api/photos/check`):
+  "Send anyway" stays possible because its limits are not tuned on real photos.
+- **Running at the company = Windows Scheduled Tasks as SYSTEM**, not a service wrapper
+  (NSSM / pywin32 would be a new dependency). Hence Python "for all users" (the Store
+  Python is per-user) and a project folder outside OneDrive.
 - **Proof faces are drawn by a person, not detected.** On the real Hagen / Rootree proofs the
   magenta trim outline is complete on the white front but almost invisible on the blue
   back: detection would work on half the faces (never-guess rule). Proof markup IS found
@@ -170,6 +187,14 @@ zone editor (web/zones.html) --zones-->     |
 - Proofs: handwritten approval ticks are grey like print and are NOT masked; they need
   ignore zones (or the printer's unsigned PDF). Markup in other colours or inside the
   copy-safety box is not found. A scanned proof's colours are not the print's colours.
+- The phone's photo check (`photo_quality.py`) has limits set on the demo's SIMULATED photos
+  (sharpness 460-670 vs limit 50, brightness 144-163 vs 50, nearly-white share 1-3% vs 20%).
+  It does not know the artwork, so a very white pack in bright light can be called "glare",
+  and it cannot tell whether the whole face is in the frame (alignment refuses that later).
+  A dark photo also scores blurry; the phone shows the first problem, the lighting one.
+- An "Always ignore this spot" zone hides EVERYTHING in that spot of that artwork from then on.
+- `windows_setup.ps1` was syntax-checked only, never run (it changes system settings); the
+  first real run is on the company PC.
 - Small print: references are compared at 1400 px. A single changed character of small text
   can fall under `strong_min_pixels` when the artwork is small in that frame (tests/test_proof.py
   uses a missing icon for this reason). "2 mm" vs "4 mm" on the Hagen fronts IS caught.
@@ -191,7 +216,8 @@ zone editor (web/zones.html) --zones-->     |
 | `packcheck/codes.py` | QR code generation, barcode / QR decoding (OpenCV) |
 | `packcheck/demo.py` | Synthetic artwork (front + back) and simulated photos with planted defects |
 | `packcheck/server.py`, `packcheck/web/` | API and the pages (home, desk, phone, history, artwork, zones editor), strings.json |
-| `scripts/` | render_artwork.py, evaluate.py, export_decisions.py, prune_runs.py |
+| `packcheck/photo_quality.py` | Is a phone photo blurry / too dark / too bright? Checked as soon as it is taken |
+| `scripts/` | render_artwork.py, evaluate.py, export_decisions.py, prune_runs.py, backup.py, windows_setup.ps1 / windows_uninstall.ps1 (+ server_logging.json) |
 | `tests/` | end-to-end tests on the demo, one file per milestone |
 | `docs/ROADMAP.md` | Milestones, each with a definition of done and its current status |
 | `docs/m1-findings.md` | Template to fill in with the real-photo measurements |

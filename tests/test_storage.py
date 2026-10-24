@@ -73,6 +73,35 @@ def test_users_and_login(connection):
         storage.add_user(connection, "Short", "12")
 
 
+def test_changing_a_pin_signs_the_user_out(connection):
+    storage.add_user(connection, "Sam", "1234")
+    storage.add_user(connection, "Alex", "4321")
+    sam_token = storage.login(connection, "Sam", "1234")
+    alex_token = storage.login(connection, "Alex", "4321")
+
+    storage.add_user(connection, "Sam", "5678")                  # same name again = new PIN
+    assert storage.user_for_token(connection, sam_token) is None    # the old login no longer works
+    assert storage.user_for_token(connection, alex_token) == "Alex"  # nobody else is signed out
+    assert storage.login(connection, "Sam", "1234") is None
+    assert storage.login(connection, "Sam", "5678") is not None
+
+
+def test_remove_user_signs_them_out_but_never_the_last_one(connection):
+    storage.add_user(connection, "Sam", "1234")
+    storage.add_user(connection, "Alex", "4321")
+    sam_token = storage.login(connection, "Sam", "1234")
+
+    assert storage.remove_user(connection, "Sam") is True
+    assert storage.list_users(connection) == ["Alex"]
+    assert storage.user_for_token(connection, sam_token) is None
+    assert storage.login(connection, "Sam", "1234") is None
+    assert storage.remove_user(connection, "Nobody") is False
+
+    with pytest.raises(ValueError):                               # would open the pages to anyone
+        storage.remove_user(connection, "Alex")
+    assert storage.login_required(connection) is True
+
+
 def test_sessions(connection):
     session_id = storage.create_session(connection)
     assert storage.session_exists(connection, session_id)

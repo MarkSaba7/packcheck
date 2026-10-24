@@ -9,6 +9,9 @@ products/*
 !products/demo-dog-food-back/
 # The inspection database holds company product names and readings.
 packcheck.sqlite
+# Backups hold all of the above; the server logs list who scanned what (scripts/windows_setup.ps1).
+backups/
+logs/
 
 # Python
 .venv/

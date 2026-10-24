@@ -20,7 +20,7 @@ Python 3.10 or newer.
 python -m venv .venv
 .venv\Scripts\activate            # Windows      (macOS / Linux: source .venv/bin/activate)
 pip install -r requirements.txt
-python -m pytest                  # 63 tests, about a minute and a half (the first run downloads nothing: OCR models ship with the package)
+python -m pytest                  # 74 tests, about three minutes (the first run downloads nothing: OCR models ship with the package)
 ```
 
 Run an inspection from the command line:
@@ -53,10 +53,15 @@ To try it with the demo, photograph `products/demo-dog-food-front/reference.png`
    screen says "phone connected". The history of scans (today / this week / this month)
    is one click away.
 3. **The phone** (`/phone`, opened from the QR code): one slot for the front, one for the
-   back; Send works only once both are taken. If the photos do not clearly point to one
-   artwork, the phone asks which one instead of guessing.
+   back; Send works only once both are taken. Each photo is checked the moment it is taken
+   (`photo_quality.py`): a blurry, dark or blown-out one says so on its slot, and Send
+   becomes "Send anyway" - a warning, never a block. If the photos do not clearly point to
+   one artwork, the phone asks which one instead of guessing.
 4. **The result** (back on the computer): each face, its differences with close-ups.
-   For each difference: **Confirm** (and say which R79 point it breaks) or **Dismiss**.
+   For each difference: **Confirm** (and say which R79 point it breaks), **Dismiss**, or
+   **Always ignore this spot**: dismiss it and add an ignore zone there to that artwork, so
+   later scans are not asked about it again (for approval ticks, signatures and other
+   things that are not on the real pack; the zone can be removed in the zone editor).
 5. **The R79** (`/report/pack/<id>`): the company's form, filled in. A point is ticked
    when both faces match the approved artwork and every flagged difference was dismissed
    by a person; it is crossed when a confirmed difference was put on it; it stays blank,
@@ -81,7 +86,22 @@ Add `&lang=fr` to the report, or press FR on a page: all text lives in
 `packcheck/web/strings.json`.
 
 Login is optional: run `python -m packcheck.cli add-user "Name" --pin 1234` and from then on
-inspecting, deciding and editing zones require a name + PIN.
+inspecting, deciding and editing zones require a name + PIN (`users` lists them,
+`remove-user "Name"` removes one, `add-user` on an existing name changes the PIN).
+
+## Running it at the company
+
+`docs/DEPLOYMENT.md` has the full steps. In short, on the company's Windows PC, from an
+elevated PowerShell in the project folder:
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\windows_setup.ps1 -BackupFolder E:\packcheck-backups
+```
+
+It makes the server start with the PC (even before anyone logs in, restarted if it
+crashes), backs up the database, artwork and proofs every night (`scripts/backup.py`),
+prunes old inspection images every week, and opens the firewall port.
+`scripts\windows_uninstall.ps1` undoes it.
 
 ## How it works
 
@@ -147,7 +167,8 @@ paper). None of that is on the real pack, so the proof cannot be used as-is.
    never compared. The zone editor shows them in pink.
 4. Open each face's zone editor (`/products/<id>/zones`) and draw:
    - an **ignore** zone over each handwritten approval tick: they are grey like the print
-     and cannot be found automatically. Better still, ask the printer for the unsigned
+     and cannot be found automatically. Quicker: scan a good pack and press **Always ignore
+     this spot** on each tick it flags. Better still, ask the printer for the unsigned
      print-ready PDF - then there are no ticks to cover, and the print is sharper.
    - the **variable** zone where the date / lot is printed (on the Hagen pouches: the
      white box at the bottom right of the back).
@@ -173,7 +194,7 @@ paper). None of that is on the real pack, so the proof cannot be used as-is.
 
 - The thresholds were tuned on simulated photos. Expect false alarms on real ones until
   milestone 1 is done. `scripts/evaluate.py` measures them; nobody has run it on real
-  photos yet.
+  photos yet. The same goes for the phone's photo check (blurry / dark / bright).
 - A colour shift over most of the face looks the same as different lighting, so it is not
   detected. Reliable colour checking needs a fixed photo spot and a golden photo; the code
   supports the golden photo, the photo spot is furniture.
@@ -207,7 +228,8 @@ products/         one folder per product; only the demo (front + back) is tracke
 private/          raw artwork, test photos, exports; ignored by git
 runs/             one folder per inspection; ignored by git
 packcheck.sqlite  the inspection database; ignored by git
-scripts/          render_artwork.py, evaluate.py, export_decisions.py, prune_runs.py
+scripts/          render_artwork.py, evaluate.py, export_decisions.py, prune_runs.py, backup.py,
+                  windows_setup.ps1 / windows_uninstall.ps1, server_logging.json
 tests/            end-to-end tests on the demo
 docs/             ROADMAP.md, m1-findings.md (template), DEPLOYMENT.md
 CLAUDE.md         project context for Claude Code
